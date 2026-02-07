@@ -7,6 +7,8 @@ import sys
 import time
 import subprocess
 import re
+import signal
+import atexit
 from datetime import datetime, timezone
 from typing import List
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -969,6 +971,31 @@ def main():
 
 
 if __name__ == '__main__':
+    # 強制結束處理器
+    def force_exit(signum=None, frame=None):
+        """強制退出程式"""
+        safe_print('\n[終止] 程式被強制關閉')
+        # 清理臨時文件
+        try:
+            import tempfile
+            temp_dir = os.path.join(tempfile.gettempdir(), 'nm3_tmp')
+            if os.path.exists(temp_dir):
+                import shutil
+                shutil.rmtree(temp_dir)
+        except:
+            pass
+        sys.exit(0)
+    
+    # 註冊信號處理
+    try:
+        signal.signal(signal.SIGINT, force_exit)  # Ctrl+C
+        signal.signal(signal.SIGTERM, force_exit)  # 終止信號
+    except:
+        pass
+    
+    # 在 Windows 上註冊程式結束時的清理
+    atexit.register(force_exit)
+    
     try:
         main()
     except KeyboardInterrupt:
