@@ -732,6 +732,28 @@ def main():
         # 解析集數選擇
         selected_episodes = parse_episode_selection(args.start_ep, len(episode_info))
         
+        # 檢查是否輸入的集數超出範圍
+        max_episode = len(episode_info)
+        invalid_episodes = [ep for ep in selected_episodes if ep > max_episode]
+        
+        if invalid_episodes:
+            safe_print('\n' + '=' * 70)
+            safe_print(f'❌ 錯誤：輸入的集數超出範圍')
+            safe_print(f'   找到的集數: 1-{max_episode}')
+            safe_print(f'   無效的集數: {sorted(invalid_episodes)}')
+            safe_print('=' * 70)
+            
+            # 清理：終止消費者線程
+            for _ in range(num_workers):
+                task_queue.put(None)
+            for t in workers:
+                t.join(timeout=1)
+            
+            browser.close()
+            playwright_instance.stop()
+            
+            raise ValueError(f'集數 {min(invalid_episodes)} 超出最大集數 {max_episode}')
+        
         # 生產者（主線程）：邊掃描邊提交任務
         total_episodes = len(selected_episodes)
         scanned_count = 0
@@ -877,7 +899,7 @@ def main():
         # 寫入文件
         safe_print('\n正在生成報告文件...')
         try:
-            report_path = os.path.join(out_dir, '解析度.txt')
+            report_path = os.path.join(out_dir, '重新下載.txt')
             with open(report_path, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(report_lines))
             safe_print(f'✓ 報告已保存: {report_path}')
@@ -923,6 +945,13 @@ def main():
                 safe_print('✓ 臨時文件夾已刪除')
         except Exception as e:
             safe_print(f'⚠️  無法刪除臨時文件夾: {e}')
+        
+        # 最後顯示需要重新下載的資訊
+        if 'need_redownload_eps' in locals() and need_redownload_eps:
+            safe_print('\n' + '=' * 70)
+            safe_print('【需要重新下載的集數】（失敗 + 寬度 < 1920）')
+            safe_print(format_episode_ranges(need_redownload_eps))
+            safe_print('=' * 70)
 
     except Exception as e:
         safe_print(f'❌ 錯誤: {e}')
