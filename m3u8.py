@@ -654,6 +654,7 @@ def main():
         
         # 為每個集數跟蹤詳細狀態
         episodes_status = {}  # {episode_num: {'status': '...', 'resolution': '', 'error': ''}}
+        max_episode_num = len(episode_info)  # 獲取最大集數
         
         def update_status(ep_num: int, status_text: str):
             """更新並打印集數狀態"""
@@ -662,7 +663,7 @@ def main():
                     episodes_status[ep_num] = {'status': '', 'resolution': '', 'error': ''}
                 
                 episodes_status[ep_num]['status'] = status_text
-                safe_print(f'[E{ep_num:03d}/157] {status_text}', flush=True)
+                safe_print(f'[E{ep_num:03d}/{max_episode_num}] {status_text}', flush=True)
         
         # 消費者線程：處理下載→合併→檢查
         def worker(worker_id: int):
