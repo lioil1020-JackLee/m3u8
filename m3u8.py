@@ -884,6 +884,33 @@ def main():
         except Exception as e:
             safe_print(f'⚠️  無法保存報告: {e}')
         
+        # 刪除寬度 < 1920 的視頻文件
+        safe_print('\n清理低分辨率視頻...')
+        deleted_count = 0
+        try:
+            for ep_num in sorted(episodes_status.keys()):
+                status_info = episodes_status[ep_num]
+                width = status_info.get('width', 0)
+                
+                # 只刪除成功下載但寬度 < 1920 的視頻
+                if width > 0 and width < 1920:
+                    # 查找對應的 MP4 文件
+                    for filename in os.listdir(out_dir):
+                        if filename.startswith(f'E{ep_num:03d}') and filename.endswith('.mp4'):
+                            mp4_file = os.path.join(out_dir, filename)
+                            try:
+                                os.remove(mp4_file)
+                                safe_print(f'✓ 已刪除: {filename}')
+                                deleted_count += 1
+                            except Exception as e:
+                                safe_print(f'⚠️  無法刪除 {filename}: {e}')
+                            break
+            
+            if deleted_count > 0:
+                safe_print(f'\n✓ 已刪除 {deleted_count} 個低分辨率視頻')
+        except Exception as e:
+            safe_print(f'⚠️  清理視頻時出錯: {e}')
+        
         # 清理臨時文件夾
         safe_print('\n清理臨時文件...')
         try:
