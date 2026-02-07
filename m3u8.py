@@ -803,11 +803,29 @@ def main():
                 safe_print(f'E{ep_num:03d}           {resolution}')
             
             safe_print('-' * 70)
+        
+        # 清理臨時文件夾
+        safe_print('\n清理臨時文件...')
+        try:
+            if os.path.exists(tmp_root):
+                import shutil
+                shutil.rmtree(tmp_root)
+                safe_print('✓ 臨時文件夾已刪除')
+        except Exception as e:
+            safe_print(f'⚠️  無法刪除臨時文件夾: {e}')
 
     except Exception as e:
         safe_print(f'❌ 錯誤: {e}')
         import traceback
         traceback.print_exc()
+        
+        # 即使出錯也嘗試清理
+        try:
+            if 'tmp_root' in locals() and os.path.exists(tmp_root):
+                import shutil
+                shutil.rmtree(tmp_root)
+        except:
+            pass
 
 
 if __name__ == '__main__':
