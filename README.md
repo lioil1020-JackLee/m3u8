@@ -1,209 +1,226 @@
-# M3U8 視頻下載器
+﻿# M3U8 視頻下載器
 
-一個功能強大的 M3U8 視頻下載工具，專為劇集和影片網站設計。使用現代化的 Playwright 瀏覽器自動化技術，支援智慧品質驗證、同時下載和完整的 UI 介面。
+一個功能強大的 M3U8 視頻下載工具，支持批量下載、靈活的集數選擇、並行處理和實時進度跟蹤。
 
-## ✨ 核心功能
+## 功能特性
 
-### 🎯 三層智慧驗證系統
-- **第一層**：快速驗證（30秒）- 檢查 M3U8 串流的解析度和可用性
-- **第二層**：完整下載 - 只有通過驗證的來源才進行完整下載
-- **第三層**：最終驗證 - MP4 合併後驗證實際解析度，確保 100% 真正 1080P
+ **核心功能**
+-  支持 M3U8 視頻流下載
+-  智能 M3U8 URL 快速嗅探（~100ms/集）
+-  並行下載支持（可配置並發數）
+-  流水線架構（邊掃描邊下載邊合併邊檢查，充分利用硬件資源）
+-  自動轉換為 MP4 格式（TS  MP4）
 
-### 🔄 智慧重試機制
-- **多來源備援**：每個集數支援多個候選來源
-- **自動失敗重試**：驗證失敗時自動切換到下一個來源
-- **來源優先級**：`海外推薦 > 海外 > 推薦 > 其他`
+ **集數選擇**
+-  支持多種靈活的集數選擇格式
+  - `.` 或留空：下載全部集數（默認）
+  - `1`：僅下載第1集
+  - `1-10`：下載第1到第10集
+  - `1,5,9,15`：下載指定的多個集數
+  - `1-5,8,10-12`：混合範圍和單個集數
 
-### 🚀 高性能下載
-- **同時下載**：支援最多 5 個並發下載任務
-- **即時處理**：找到可用來源立即開始下載
-- **線程池管理**：優化的線程資源管理
+ **用戶界面**
+- GUI 窗口配置（支持右鍵菜單粘貼）
+- 支持 `.ico` 圖標自定義
+- 命令行參數支持（適合自動化）
 
-### 🎨 用戶體驗
-- **UI-First 設計**：友好的圖形介面，支援拖拽和右鍵選單
-- **命令列支援**：完整的 CLI 參數配置
-- **即時進度**：詳細的下載狀態和進度顯示
-- **安全輸出**：Unicode 安全的控制台輸出
+ **進度跟蹤**
+- 實時集數狀態顯示（掃描中  排隊中  下載中  合併中  檢查中）
+- 最終統計報告（成功/失敗統計）
+- 詳細解析度報告
 
-### 🛠️ 技術特色
-- **現代包管理**：使用 uv 進行快速依賴管理
-- **獨立打包**：支援打包為單一目錄的可執行文件
-- **跨平台支援**：Windows/Linux/macOS
-- **瀏覽器整合**：內建 Chromium 瀏覽器，無需額外安裝
+ **高級特性**
+- 容器和 FLV 來源自動識別
+- 集數重複名稱智能處理（例如：E153, E153-2）
+- 特殊集數支持（總篇、劇場版等）
+- 智能文件夾創建（自動創建輸出目錄）
 
-## 📦 安裝方式
+## 系統要求
 
-### 方式一：使用 uv（推薦）
+- **Python** 3.12 或更高版本
+- **外部工具**（自動包含在發行版中）
+  - `N_m3u8DL-RE.exe` - M3U8 下載器
+  - `FFmpeg.exe` - 音視頻處理工具
+  - `FFprobe.exe` - 視頻解析工具
+  - `chromium` - 瀏覽器自動化（Playwright 自動下載）
 
-```bash
-# 安裝 uv（如果尚未安裝）
-curl -LsSf https://astral.sh/uv/install.sh | sh
+## 安裝
 
-# 下載專案
-git clone https://github.com/lioil1020-JackLee/m3u8.git
+### 方式 1：使用 Python 源代碼
+
+\\\ash
+# 克隆或下載項目
 cd m3u8
-
-# 使用 uv 安裝依賴
-uv sync
-
-# 安裝 Playwright 瀏覽器
-uv run playwright install
-```
-
-### 方式二：傳統 pip 安裝
-
-```bash
-# 下載專案
-git clone https://github.com/lioil1020-JackLee/m3u8.git
-cd m3u8
-
-# 建立虛擬環境
-python -m venv .venv
-.\.venv\Scripts\activate  # Windows
-# source .venv/bin/activate  # Linux/macOS
 
 # 安裝依賴
 pip install -r requirements.txt
-playwright install
-```
 
-## 🚀 使用方法
+# 運行
+python m3u8.py
+\\\
 
-### 圖形介面模式（推薦新手）
+### 方式 2：使用已編譯的 EXE（推薦）
 
-```bash
-# 啟動圖形介面
-uv run python m3u8.py
+直接運行 `m3u8.exe`，無需安裝 Python 或依賴。
 
-# 或使用打包版本
-dist/m3u8/m3u8.exe
-```
+## 使用方式
 
-### 命令列模式
+### GUI 模式（推薦用戶友好）
 
-```bash
-# 基本用法
-uv run python m3u8.py --url "https://example.com/episode-page" --out-dir "./downloads"
+\\\ash
+python m3u8.py
+# 或
+m3u8.exe
+\\\
 
-# 自訂參數
-uv run python m3u8.py \
-  --url "https://example.com/episode-page" \
-  --out-dir "./downloads" \
-  --max-downloads 3 \
-  --episode-selector ".episodes a, .playlist a" \
-  --source-text "HD" \
-  --wait 3.0
+然後在彈出的窗口中：
+1. 輸入目標頁面 URL
+2. 選擇 FLV 來源（通常為 1，表示首個來源）
+3. 選擇要下載的集數（支持靈活格式）
+4. 選擇輸出資料夾
+5. 點擊 "Start" 開始下載
 
-# Headless 模式（無視窗）
-uv run python m3u8.py --url "https://example.com" --headless --no-ui
-```
+### 命令行模式（適合自動化）
 
-## ⚙️ 命令列參數
+\\\ash
+python m3u8.py \
+    --url "https://example.com/video" \
+    --flv-idx 1 \
+    --start-ep "." \
+    --out-dir "F:/videos" \
+    --max-downloads 5 \
+    --wait 1.5 \
+    --no-ui
 
-| 參數 | 說明 | 預設值 |
-|------|------|--------|
-| `--url` | 目標劇集頁面 URL | 無（顯示 UI） |
-| `--out-dir` | MP4 輸出資料夾 | 無（顯示 UI） |
-| `--max-downloads` | 同時下載數量 | 5 |
-| `--episode-selector` | 集數按鈕 CSS 選擇器 | 多個備援選擇器 |
-| `--source-text` | 偏好來源按鈕文字 | "FLV" |
-| `--wait` | 點擊後等待秒數 | 2.0 |
-| `--fast` | 啟用快速嗅探模式 | 預設啟用 |
-| `--headless` | 無視窗模式 | 關閉 |
-| `--no-minimize` | 不最小化瀏覽器 | 預設最小化 |
-| `--no-ui` | 不顯示啟動 UI | 顯示 |
+# 參數說明：
+# --url              : 目標頁面 URL
+# --flv-idx          : FLV 來源索引（默認：1）
+# --start-ep         : 集數選擇（默認：. 即全部）
+#                      支持格式：. 全部，1 僅第1集，1-10，1,5,9，1-5,8,10-12
+# --out-dir          : 輸出資料夾（默認：當前目錄）
+# --max-downloads    : 最大並發下載數（默認：5，建議 3-8）
+# --wait             : M3U8 嗅探超時秒數（默認：2.0）
+# --no-ui            : 不顯示 GUI，直接使用命令行參數
+\\\
 
-## 🏗️ 專案打包
+## 集數選擇示例
 
-### 使用 uv 打包 OneDir 格式
+\\\ash
+# 下載全部集數
+--start-ep "."
 
-```bash
-# 打包為獨立可執行文件
+# 只下載第1集
+--start-ep "1"
+
+# 下載第1到第20集
+--start-ep "1-20"
+
+# 下載第1, 5, 10, 15 集
+--start-ep "1,5,10,15"
+
+# 下載第1-5集、第10集、第15-20集
+--start-ep "1-5,10,15-20"
+\\\
+
+## 輸出結果
+
+下載完成後，將生成：
+- `{show_name}.S{season}.E{episode}.mp4` - 最終 MP4 視頻文件
+- 詳細的解析度報告，顯示每集的視頻解析度
+
+## 工作流程
+
+\\\
+
+                   流水線架構說明                         
+
+                                                         
+  生產者 (主線程)                                        
+   掃描集數1  M3U8 URL1  入隊                        
+   掃描集數2  M3U8 URL2  入隊                        
+   ...邊掃描邊入隊...                                  
+                                                       
+                                                       
+    任務隊列                           
+   URL1  URL2  ...                                 
+                                      
+                                                       
+                                            
+                消費者 (5個並發工作線程)             
+     W1   W2   W3                                       
+      下載  合併  檢查解析度                        
+      下載  合併  檢查解析度                        
+      下載  合併  檢查解析度                        
+                                                       
+                                                       
+     生成 MP4 + 記錄解析度                              
+                                                         
+
+\\\
+
+## 性能指標
+
+典型性能（基於網絡和硬件條件）：
+
+| 操作 | 耗時 |
+|------|------|
+| M3U8 URL 嗅探 | ~100ms |
+| 集數掃描（157集） | ~30-40 秒 |
+| 並行下載（5個工作線程） | 取決於網速 |
+| TS  MP4 合併 | 通常 5-30 秒/集 |
+
+## 項目打包
+
+使用 uv 打包為獨立的 onedir 可執行文件：
+
+\\\ash
+# 打包為 onedir 格式
 uv run pyinstaller --clean m3u8.spec
 
-# 打包完成後的文件位於 dist/m3u8/
-```
+# 打包結果位於 dist/m3u8/ 文件夾
+\\\
 
-打包後的文件包含：
-- 主執行文件 (`m3u8.exe`)
-- 所有 Python 依賴
-- Chromium 瀏覽器
-- FFmpeg 和 N_m3u8DL-RE 工具
+生成的 `dist/m3u8/` 文件夾包含：
+- `m3u8.exe` - 主執行文件
+- `exe/` - 外部工具目錄（ffmpeg, ffprobe, N_m3u8DL-RE）
+- `lioil.ico` - 窗口圖標
+- 完整的 Python 環境和依賴
 
-## 📋 系統需求
+## 故障排除
 
-- **Python**: 3.12+
-- **作業系統**: Windows 10+ / Linux / macOS
-- **記憶體**: 至少 4GB RAM
-- **儲存空間**: 至少 2GB 可用空間
+###  "找不到集數容器"
+- 檢查 URL 是否正確且頁面已完全加載
+- 網頁結構可能已更改，需要更新容器選擇器
 
-## 🔧 專案結構
+###  M3U8 掃描失敗
+- 增加 `--wait` 參數值（例如 3.0 秒）
+- 檢查網絡連接
+- 某些集數可能在源站不可用
 
-```
-m3u8/
-├── m3u8.py              # 主程式文件
-├── m3u8.spec            # PyInstaller 配置
-├── pyproject.toml       # 專案配置
-├── requirements.txt     # 依賴列表
-├── uv.lock             # uv 鎖定文件
-├── lioil.ico           # 應用程式圖標
-├── exe/                 # 外部工具
-│   ├── ffmpeg.exe       # 視頻合併工具
-│   └── N_m3u8DL-RE.exe  # M3U8 下載器
-├── browsers/            # Playwright 瀏覽器
-└── dist/                # 打包輸出目錄
-```
+###  FFmpeg 合併失敗
+- 確保 `ffmpeg.exe` 在 `exe/` 目錄中
+- 檢查硬盤空間是否充足
 
-## 🎯 支援的網站類型
+###  低分辨率或未知解析度
+- 個別集數可能存儲格式特殊
+- 仍可查看已下載的 MP4 文件
 
-- 劇集播放網站
-- 影片分享平台
-- 支援 M3U8 串流的任何網站
-- 自訂 CSS 選擇器支援各種網站結構
+## 依賴項
 
-## 🐛 故障排除
+詳見 `requirements.txt`：
+- `playwright` - 瀏覽器自動化
+- `urllib3` - HTTP 客戶端（無 SSL 警告）
 
-### 常見問題
+## 許可證
 
-**Q: 程式啟動失敗**
-A: 確保已安裝所有依賴：`uv sync && uv run playwright install`
+個人用途專用工具。
 
-**Q: 下載速度慢**
-A: 調整 `--max-downloads` 參數，或檢查網路連接
+## 貢獻
 
-**Q: 無法找到集數**
-A: 使用 `--episode-selector` 自訂 CSS 選擇器
-
-**Q: 品質驗證失敗**
-A: 程式會自動嘗試其他來源，請等待重試完成
-
-### 錯誤日誌
-
-程式會在控制台顯示詳細的處理資訊，包括：
-- 驗證狀態
-- 下載進度
-- 錯誤訊息
-- 最終結果摘要
-
-## 📄 授權
-
-本專案採用 MIT 授權條款。
-
-## 🤝 貢獻
-
-歡迎提交 Issue 和 Pull Request！
-
-1. Fork 此專案
-2. 建立功能分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交變更 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 開啟 Pull Request
-
-## 📞 聯絡方式
-
-- **作者**: lioil1020-JackLee
-- **GitHub**: [https://github.com/lioil1020-JackLee/m3u8](https://github.com/lioil1020-JackLee/m3u8)
+如有建議或發現 Bug，歡迎反饋。
 
 ---
 
-**注意**: 本工具僅供學習和個人使用，請遵守相關網站的使用條款和版權法規。
+**最後更新**: 2026 年 2 月
+
+**版本**: 2.1 - 流水線架構 + 靈活集數選擇 + 改進的集數選擇邏輯
