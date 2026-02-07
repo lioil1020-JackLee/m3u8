@@ -487,9 +487,11 @@ def main():
             os.environ['PLAYWRIGHT_BROWSERS_PATH'] = browsers_path
         
         safe_print('\n[1/3] 初始化 Playwright...')
+        safe_print('  ⏳ 正在启动浏览器驱动...')
         playwright_instance = sync_playwright().start()
 
         safe_print('[2/3] 啟動瀏覽器和加載頁面...')
+        safe_print('  ⏳ 正在启动 Chromium...')
         browser = playwright_instance.chromium.launch(headless=True)
         page = browser.new_page()
 
@@ -497,14 +499,24 @@ def main():
         page.route('**/*', lambda route, request: route.abort() if request.resource_type in
                    ('image', 'stylesheet', 'font', 'media') else route.continue_())
 
+        safe_print('  ⏳ 正在加载页面...')
         page.goto(args.url, wait_until='domcontentloaded')
+        safe_print('  ✓ 页面加载完成')
         time.sleep(1)
 
         safe_print('[3/3] 分析 FLV 來源...')
+        safe_print('  ⏳ 正在查找容器...')
         
         # 獲取所有 FLV 容器
         containers = page.query_selector_all('.jujiepisodios')
-        safe_print(f'✓ 發現 {len(containers)} 個容器')
+        safe_print(f'  ✓ 發現 {len(containers)} 個容器')
+        
+        if len(containers) == 0:
+            safe_print('  ⚠️  提示：未找到容器，页面选择器可能已改变')
+            safe_print('  💡 请确认：')
+            safe_print('     • URL 是否正确')
+            safe_print('     • 页面是否完全加载')
+            safe_print('     • 浏览器窗口是否显示')
         
         # 記錄每個容器的集數數量
         container_episodes = {}
@@ -516,8 +528,9 @@ def main():
         
         # 找到對應 FLV 索引的 FLV 按鈕並點擊
         flv_idx = args.flv_idx
+        safe_print('  ⏳ 正在查找 FLV 按鈕...')
         flv_buttons = page.locator('//a[contains(text(), "FLV")]').all()
-        safe_print(f'  找到 {len(flv_buttons)} 個 FLV 按鈕')
+        safe_print(f'  ✓ 找到 {len(flv_buttons)} 個 FLV 按鈕')
         
         flv_container_idx = None
         try:
@@ -689,6 +702,8 @@ def main():
         total_episodes = len(selected_episodes)
         scanned_count = 0
         
+        safe_print(f'\n========== 流水線處理 (掃描 {total_episodes} 集) ==========\n')
+        
         for ep_idx, (el_idx, ep_text, season, episode, suffix) in enumerate(episode_info):
             # 檢查是否在選擇的集數範圍內
             if season == 1 and episode not in selected_episodes:
@@ -703,6 +718,7 @@ def main():
                 save_name = f'{show_name}.S{season:03d}.E{episode:03d}{suffix}'
             
             scanned_count += 1
+            safe_print(f'⏳ 掃描進度: [{scanned_count}/{total_episodes}] E{episode:03d}...', end='', flush=True)
             update_status(episode, '掃描中...')
             
             try:
@@ -733,10 +749,12 @@ def main():
                     m3u8_list = sniff_m3u8(page, el, wait_seconds=1.0)
                     if m3u8_list:
                         url_m3u8 = m3u8_list[-1]
+                        print()  # 新行，分隔掃描進度和狀態輸出
                         update_status(episode, '掃描完成...排隊中')
                         # 立即提交到隊列，讓消費者開始處理
                         task_queue.put((episode, url_m3u8, save_name))
                     else:
+                        print()  # 新行
                         update_status(episode, '✗ 掃描失敗')
                 except Exception as e:
                     update_status(episode, '✗ 掃描異常')
