@@ -712,6 +712,7 @@ def main():
                         episodes_status[episode_num]['resolution'] = resolution
                         episodes_status[episode_num]['width'] = width
                         episodes_status[episode_num]['height'] = height
+                        episodes_status[episode_num]['save_name'] = save_name
                         
                 except Exception as e:
                     error_msg = str(e)[:30]
@@ -892,28 +893,23 @@ def main():
                 status_info = episodes_status[ep_num]
                 width = status_info.get('width', 0)
                 resolution = status_info.get('resolution', '')
+                save_name = status_info.get('save_name', '')
                 
                 # 調試信息
-                safe_print(f'  [檢查] E{ep_num:03d}: width={width}, resolution={resolution}', flush=True)
+                safe_print(f'  [檢查] E{ep_num:03d}: width={width}, save_name={save_name}', flush=True)
                 
                 # 只刪除成功下載但寬度 < 1920 的視頻
-                if width > 0 and width < 1920:
-                    # 查找對應的 MP4 文件
-                    found = False
-                    for filename in os.listdir(out_dir):
-                        if filename.startswith(f'E{ep_num:03d}') and filename.endswith('.mp4'):
-                            mp4_file = os.path.join(out_dir, filename)
-                            try:
-                                os.remove(mp4_file)
-                                safe_print(f'  ✓ 已刪除: {filename}')
-                                deleted_count += 1
-                                found = True
-                            except Exception as e:
-                                safe_print(f'  ⚠️  無法刪除 {filename}: {e}')
-                            break
-                    
-                    if not found:
-                        safe_print(f'  ⚠️  找不到 E{ep_num:03d} 的 MP4 文件')
+                if width > 0 and width < 1920 and save_name:
+                    mp4_file = os.path.join(out_dir, f'{save_name}.mp4')
+                    if os.path.exists(mp4_file):
+                        try:
+                            os.remove(mp4_file)
+                            safe_print(f'  ✓ 已刪除: {save_name}.mp4')
+                            deleted_count += 1
+                        except Exception as e:
+                            safe_print(f'  ⚠️  無法刪除 {save_name}.mp4: {e}')
+                    else:
+                        safe_print(f'  ⚠️  找不到: {save_name}.mp4')
             
             safe_print(f'\n✓ 已刪除 {deleted_count} 個低分辨率視頻')
         except Exception as e:
