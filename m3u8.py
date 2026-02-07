@@ -120,8 +120,16 @@ def show_start_ui() -> tuple:
     
     # 設定視窗圖標
     try:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        icon_path = os.path.join(script_dir, 'lioil.ico')
+        # 優先檢查 _MEIPASS（打包 EXE 環境）
+        icon_path = None
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            icon_path = os.path.join(sys._MEIPASS, 'lioil.ico')
+        
+        # 如果沒找到，檢查開發環境路徑
+        if not icon_path or not os.path.exists(icon_path):
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            icon_path = os.path.join(script_dir, 'lioil.ico')
+        
         if os.path.exists(icon_path):
             root.iconbitmap(icon_path)
     except Exception:
