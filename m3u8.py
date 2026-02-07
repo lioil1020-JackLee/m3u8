@@ -891,23 +891,31 @@ def main():
             for ep_num in sorted(episodes_status.keys()):
                 status_info = episodes_status[ep_num]
                 width = status_info.get('width', 0)
+                resolution = status_info.get('resolution', '')
+                
+                # 調試信息
+                safe_print(f'  [檢查] E{ep_num:03d}: width={width}, resolution={resolution}', flush=True)
                 
                 # 只刪除成功下載但寬度 < 1920 的視頻
                 if width > 0 and width < 1920:
                     # 查找對應的 MP4 文件
+                    found = False
                     for filename in os.listdir(out_dir):
                         if filename.startswith(f'E{ep_num:03d}') and filename.endswith('.mp4'):
                             mp4_file = os.path.join(out_dir, filename)
                             try:
                                 os.remove(mp4_file)
-                                safe_print(f'✓ 已刪除: {filename}')
+                                safe_print(f'  ✓ 已刪除: {filename}')
                                 deleted_count += 1
+                                found = True
                             except Exception as e:
-                                safe_print(f'⚠️  無法刪除 {filename}: {e}')
+                                safe_print(f'  ⚠️  無法刪除 {filename}: {e}')
                             break
+                    
+                    if not found:
+                        safe_print(f'  ⚠️  找不到 E{ep_num:03d} 的 MP4 文件')
             
-            if deleted_count > 0:
-                safe_print(f'\n✓ 已刪除 {deleted_count} 個低分辨率視頻')
+            safe_print(f'\n✓ 已刪除 {deleted_count} 個低分辨率視頻')
         except Exception as e:
             safe_print(f'⚠️  清理視頻時出錯: {e}')
         
