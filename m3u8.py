@@ -118,6 +118,15 @@ def show_start_ui() -> tuple:
     root.title('M3U8 下載器 - 設定')
     root.geometry('400x180')    
     
+    # 設定視窗圖標
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        icon_path = os.path.join(script_dir, 'lioil.ico')
+        if os.path.exists(icon_path):
+            root.iconbitmap(icon_path)
+    except Exception:
+        pass
+    
     # URL 標籤和輸入
     tk.Label(root, text='Target page URL:').pack(anchor='w', padx=8, pady=(8, 0))
     url_var = tk.StringVar()

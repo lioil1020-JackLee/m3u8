@@ -5,7 +5,7 @@ a = Analysis(
     ['m3u8.py'],
     pathex=[],
     binaries=[('exe/ffmpeg.exe', 'exe'), ('exe/N_m3u8DL-RE.exe', 'exe')],
-    datas=[('exe', 'exe'), ('browsers', 'browsers')],
+    datas=[('lioil.ico', '.'), ('exe', 'exe'), ('browsers', 'browsers')],
     hiddenimports=['playwright'],
     hookspath=[],
     hooksconfig={},
