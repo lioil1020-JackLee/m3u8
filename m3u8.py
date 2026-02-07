@@ -57,7 +57,8 @@ def parse_episode_selection(selection_str: str, max_episodes: int) -> set:
     # 檢查是否是單個數字（只下載該集）
     if selection_str.isdigit():
         ep = int(selection_str)
-        if 1 <= ep <= max_episodes:
+        # 允許超出範圍的集數（可能是後續集數）
+        if ep > 0:
             return {ep}
         else:
             return set(range(1, max_episodes + 1))
@@ -85,7 +86,7 @@ def parse_episode_selection(selection_str: str, max_episodes: int) -> set:
         else:
             try:
                 ep = int(part)
-                if 1 <= ep <= max_episodes:
+                if ep > 0:
                     selected.add(ep)
             except ValueError:
                 pass
@@ -685,7 +686,6 @@ def main():
                         update_status(episode_num, '掃描完成...✗ 下載失敗')
                         with results_lock:
                             episodes_status[episode_num]['error'] = '下載失敗'
-                        task_queue.task_done()
                         continue
                     
                     update_status(episode_num, '掃描完成...下載完成...合併中')
@@ -696,7 +696,6 @@ def main():
                         update_status(episode_num, '掃描完成...下載完成...✗ 合併失敗')
                         with results_lock:
                             episodes_status[episode_num]['error'] = '合併失敗'
-                        task_queue.task_done()
                         continue
                     
                     update_status(episode_num, '掃描完成...下載完成...合併完成...檢查中')
