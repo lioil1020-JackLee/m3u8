@@ -463,6 +463,19 @@ def main():
     safe_print('=' * 60)
 
     try:
+        # 設置 Playwright 瀏覽器路徑（支持 PyInstaller 打包）
+        # PyInstaller 將資源放在 _internal 目錄下
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            # 打包的 EXE 環境
+            base_path = sys._MEIPASS
+        else:
+            # 開發環境
+            base_path = os.path.dirname(os.path.abspath(__file__))
+        
+        browsers_path = os.path.join(base_path, 'browsers')
+        if os.path.exists(browsers_path):
+            os.environ['PLAYWRIGHT_BROWSERS_PATH'] = browsers_path
+        
         safe_print('\n[1/3] 初始化 Playwright...')
         playwright_instance = sync_playwright().start()
 
