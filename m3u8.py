@@ -93,6 +93,36 @@ def parse_episode_selection(selection_str: str, max_episodes: int) -> set:
     return selected if selected else set(range(1, max_episodes + 1))
 
 
+def format_episode_ranges(episode_nums: list) -> str:
+    """將集數列表轉換為範圍格式 (e.g. 1-5,8,10-12)"""
+    if not episode_nums:
+        return ""
+    
+    sorted_eps = sorted(episode_nums)
+    ranges = []
+    start = sorted_eps[0]
+    end = sorted_eps[0]
+    
+    for ep in sorted_eps[1:]:
+        if ep == end + 1:
+            end = ep
+        else:
+            if start == end:
+                ranges.append(str(start))
+            else:
+                ranges.append(f'{start}-{end}')
+            start = ep
+            end = ep
+    
+    # 添加最後一個範圍
+    if start == end:
+        ranges.append(str(start))
+    else:
+        ranges.append(f'{start}-{end}')
+    
+    return ','.join(ranges)
+
+
 def parse_args():
     p = argparse.ArgumentParser(description='M3U8 視頻下載器')
     p.add_argument('--url', default=None, help='目標頁面 URL')
@@ -674,10 +704,14 @@ def main():
                     # 檢查分辨率
                     res_info = check_video_resolution(out_mp4)
                     resolution = res_info.get('resolution', 'Unknown')
+                    width = res_info.get('width', 0)
+                    height = res_info.get('height', 0)
                     
                     update_status(episode_num, f'掃描完成...下載完成...合併完成...✓ {resolution}')
                     with results_lock:
                         episodes_status[episode_num]['resolution'] = resolution
+                        episodes_status[episode_num]['width'] = width
+                        episodes_status[episode_num]['height'] = height
                         
                 except Exception as e:
                     error_msg = str(e)[:30]
@@ -786,12 +820,26 @@ def main():
         safe_print(f'完成: {success_count}/{total_count} 集')
         safe_print('=' * 70)
         
+        # 生成報告內容（同時寫入文件）
+        report_lines = []
+        report_lines.append('=' * 70)
+        report_lines.append(f'完成: {success_count}/{total_count} 集')
+        report_lines.append('=' * 70)
+        
         # 詳細報告（按集數排序）
         if episodes_status:
             safe_print('\n【解析度報告】')
+            report_lines.append('')
+            report_lines.append('【解析度報告】')
             safe_print('-' * 70)
+            report_lines.append('-' * 70)
             safe_print(f'{'集數':<15} {'解析度':<20}')
+            report_lines.append(f'{'集數':<15} {'解析度':<20}')
             safe_print('-' * 70)
+            report_lines.append('-' * 70)
+            
+            # 收集低分辨率集數
+            low_resolution_eps = []
             
             for ep_num in sorted(episodes_status.keys()):
                 status_info = episodes_status[ep_num]
@@ -799,10 +847,40 @@ def main():
                 if not resolution:
                     error = status_info.get('error', '未知錯誤')
                     resolution = f'✗ {error}'
+                else:
+                    # 檢查寬度是否 < 1920
+                    try:
+                        width = status_info.get('width', 0)
+                        if width > 0 and width < 1920:
+                            low_resolution_eps.append(ep_num)
+                    except:
+                        pass
                 
-                safe_print(f'E{ep_num:03d}           {resolution}')
+                line = f'E{ep_num:03d}           {resolution}'
+                safe_print(line)
+                report_lines.append(line)
             
             safe_print('-' * 70)
+            report_lines.append('-' * 70)
+            
+            # 添加低分辨率集數列表
+            if low_resolution_eps:
+                safe_print('\n【寬度 < 1920 的集數】')
+                report_lines.append('')
+                report_lines.append('【寬度 < 1920 的集數】')
+                low_res_formatted = format_episode_ranges(low_resolution_eps)
+                safe_print(low_res_formatted)
+                report_lines.append(low_res_formatted)
+        
+        # 寫入文件
+        safe_print('\n正在生成報告文件...')
+        try:
+            report_path = os.path.join(out_dir, '解析度.txt')
+            with open(report_path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(report_lines))
+            safe_print(f'✓ 報告已保存: {report_path}')
+        except Exception as e:
+            safe_print(f'⚠️  無法保存報告: {e}')
         
         # 清理臨時文件夾
         safe_print('\n清理臨時文件...')
