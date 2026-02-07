@@ -838,8 +838,8 @@ def main():
             safe_print('-' * 70)
             report_lines.append('-' * 70)
             
-            # 收集低分辨率集數
-            low_resolution_eps = []
+            # 收集需要重新下載的集數（低分辨率 + 下載/掃描/合成失敗）
+            need_redownload_eps = []
             
             for ep_num in sorted(episodes_status.keys()):
                 status_info = episodes_status[ep_num]
@@ -847,12 +847,14 @@ def main():
                 if not resolution:
                     error = status_info.get('error', '未知錯誤')
                     resolution = f'✗ {error}'
+                    # 失敗的集數也加入需要重新下載的列表
+                    need_redownload_eps.append(ep_num)
                 else:
                     # 檢查寬度是否 < 1920
                     try:
                         width = status_info.get('width', 0)
                         if width > 0 and width < 1920:
-                            low_resolution_eps.append(ep_num)
+                            need_redownload_eps.append(ep_num)
                     except:
                         pass
                 
@@ -863,14 +865,14 @@ def main():
             safe_print('-' * 70)
             report_lines.append('-' * 70)
             
-            # 添加低分辨率集數列表
-            if low_resolution_eps:
-                safe_print('\n【寬度 < 1920 的集數】')
+            # 添加需要重新下載的集數列表（包含失敗和低分辨率）
+            if need_redownload_eps:
+                safe_print('\n【需要重新下載的集數】（失敗 + 寬度 < 1920）')
                 report_lines.append('')
-                report_lines.append('【寬度 < 1920 的集數】')
-                low_res_formatted = format_episode_ranges(low_resolution_eps)
-                safe_print(low_res_formatted)
-                report_lines.append(low_res_formatted)
+                report_lines.append('【需要重新下載的集數】（失敗 + 寬度 < 1920）')
+                redownload_formatted = format_episode_ranges(need_redownload_eps)
+                safe_print(redownload_formatted)
+                report_lines.append(redownload_formatted)
         
         # 寫入文件
         safe_print('\n正在生成報告文件...')
