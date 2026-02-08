@@ -7,6 +7,9 @@ import sys
 import time
 import subprocess
 import re
+import signal
+import atexit
+import locale
 from datetime import datetime, timezone
 from typing import List
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -320,7 +323,7 @@ def run_downloader(url: str, out_dir: str, save_name: str, tmp_root: str) -> str
     os.makedirs(out_dir, exist_ok=True)
 
     cmd = [downloader, url, '--save-dir', out_dir, '--save-name', save_name,
-           '--skip-merge', '--tmp-dir', tmp_dir]
+           '--skip-merge', '--tmp-dir', tmp_dir, '--no-log']
 
     try:
         proc = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -328,6 +331,9 @@ def run_downloader(url: str, out_dir: str, save_name: str, tmp_root: str) -> str
         if proc.returncode == 0:
             return tmp_dir
         else:
+            safe_print(f'  ❌ 下載器返回錯誤代碼 {proc.returncode}')
+            if proc.stdout:
+                safe_print(f'  輸出: {proc.stdout.strip()}')
             return None
     except Exception as e:
         safe_print(f'  ❌ 執行失敗: {e}')
@@ -477,6 +483,16 @@ def check_video_resolution(mp4_path: str, ffprobe_path: str = None, max_retries:
 
 
 def main():
+    # 設置繁體中文 locale
+    try:
+        locale.setlocale(locale.LC_ALL, 'zh_TW.UTF-8')
+    except locale.Error:
+        try:
+            # Windows 備用
+            locale.setlocale(locale.LC_ALL, 'Chinese (Traditional)_Taiwan.950')
+        except locale.Error:
+            pass  # 使用默認 locale
+    
     args = parse_args()
 
     # 取得參數
@@ -518,11 +534,11 @@ def main():
             os.environ['PLAYWRIGHT_BROWSERS_PATH'] = browsers_path
         
         safe_print('\n[1/3] 初始化 Playwright...')
-        safe_print('  ⏳ 正在启动浏览器驱动...')
+        safe_print('  ⏳ 正在啟動瀏覽器驅動...')
         playwright_instance = sync_playwright().start()
 
         safe_print('[2/3] 啟動瀏覽器和加載頁面...')
-        safe_print('  ⏳ 正在启动 Chromium...')
+        safe_print('  ⏳ 正在啟動 Chromium...')
         browser = playwright_instance.chromium.launch(headless=True)
         page = browser.new_page()
 
@@ -530,24 +546,24 @@ def main():
         page.route('**/*', lambda route, request: route.abort() if request.resource_type in
                    ('image', 'stylesheet', 'font', 'media') else route.continue_())
 
-        safe_print('  ⏳ 正在加载页面...')
+        safe_print('  ⏳ 正在載入頁面...')
         page.goto(args.url, wait_until='domcontentloaded')
-        safe_print('  ✓ 页面加载完成')
+        safe_print('  ✓ 頁面載入完成')
         time.sleep(1)
 
         safe_print('[3/3] 分析 FLV 來源...')
-        safe_print('  ⏳ 正在查找容器...')
+        safe_print('  ⏳ 正在尋找容器...')
         
         # 獲取所有 FLV 容器
         containers = page.query_selector_all('.jujiepisodios')
         safe_print(f'  ✓ 發現 {len(containers)} 個容器')
         
         if len(containers) == 0:
-            safe_print('  ⚠️  提示：未找到容器，页面选择器可能已改变')
-            safe_print('  💡 请确认：')
-            safe_print('     • URL 是否正确')
-            safe_print('     • 页面是否完全加载')
-            safe_print('     • 浏览器窗口是否显示')
+            safe_print('  ⚠️  提示：未找到容器，頁面選擇器可能已改變')
+            safe_print('  💡 請確認：')
+            safe_print('     • URL 是否正確')
+            safe_print('     • 頁面是否完全載入')
+            safe_print('     • 瀏覽器視窗是否顯示')
         
         # 記錄每個容器的集數數量
         container_episodes = {}
@@ -559,7 +575,7 @@ def main():
         
         # 找到對應 FLV 索引的 FLV 按鈕並點擊
         flv_idx = args.flv_idx
-        safe_print('  ⏳ 正在查找 FLV 按鈕...')
+        safe_print('  ⏳ 正在尋找 FLV 按鈕...')
         flv_buttons = page.locator('//a[contains(text(), "FLV")]').all()
         safe_print(f'  ✓ 找到 {len(flv_buttons)} 個 FLV 按鈕')
         
@@ -606,8 +622,8 @@ def main():
         except:
             show_name = 'Unknown'
 
-        # 提取集數信息（文本、季號、集號）
-        safe_print('分析集數信息...')
+        # 提取集數資訊（文本、季號、集號）
+        safe_print('分析集數資訊...')
         episode_info = []  # 列表存 (index, ep_text, season, episode, suffix)
         ep_text_count = {}  # 用於統計重複集數
         
@@ -654,6 +670,7 @@ def main():
         
         # 為每個集數跟蹤詳細狀態
         episodes_status = {}  # {episode_num: {'status': '...', 'resolution': '', 'error': ''}}
+        max_episode_num = len(episode_info)  # 獲取最大集數
         
         def update_status(ep_num: int, status_text: str):
             """更新並打印集數狀態"""
@@ -662,7 +679,7 @@ def main():
                     episodes_status[ep_num] = {'status': '', 'resolution': '', 'error': ''}
                 
                 episodes_status[ep_num]['status'] = status_text
-                safe_print(f'[E{ep_num:03d}/157] {status_text}', flush=True)
+                safe_print(f'[E{ep_num:03d}/{max_episode_num}] {status_text}', flush=True)
         
         # 消費者線程：處理下載→合併→檢查
         def worker(worker_id: int):
@@ -897,7 +914,7 @@ def main():
                 report_lines.append(redownload_formatted)
         
         # 寫入文件
-        safe_print('\n正在生成報告文件...')
+        safe_print('\n正在產生報告檔案...')
         try:
             report_path = os.path.join(out_dir, '重新下載.txt')
             with open(report_path, 'w', encoding='utf-8') as f:
@@ -965,14 +982,71 @@ def main():
                 shutil.rmtree(tmp_root)
         except:
             pass
+        
+        # 清理 N_m3u8DL-RE 生成的 logs 資料夾
+        try:
+            if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+                logs_dir = os.path.join(sys._MEIPASS, 'exe', 'logs')
+                if os.path.exists(logs_dir):
+                    import shutil
+                    shutil.rmtree(logs_dir)
+        except Exception as e:
+            safe_print(f'清理 logs 資料夾失敗: {e}')
 
 
 if __name__ == '__main__':
+    # 強制結束處理器
+    def force_exit(signum=None, frame=None):
+        """強制退出程式"""
+        safe_print('\n[終止] 程式被強制關閉')
+        # 清理臨時文件
+        try:
+            import tempfile
+            temp_dir = os.path.join(tempfile.gettempdir(), 'nm3_tmp')
+            if os.path.exists(temp_dir):
+                import shutil
+                shutil.rmtree(temp_dir)
+        except:
+            pass
+        
+        # 清理 N_m3u8DL-RE 生成的 logs 資料夾
+        try:
+            if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+                logs_dir = os.path.join(sys._MEIPASS, 'exe', 'logs')
+                if os.path.exists(logs_dir):
+                    import shutil
+                    shutil.rmtree(logs_dir)
+                    safe_print(f'已清理 logs 資料夾: {logs_dir}')
+        except Exception as e:
+            safe_print(f'清理 logs 資料夾失敗: {e}')
+        
+        sys.exit(0)
+    
+    # 註冊信號處理
+    try:
+        signal.signal(signal.SIGINT, force_exit)  # Ctrl+C
+        signal.signal(signal.SIGTERM, force_exit)  # 終止信號
+    except:
+        pass
+    
+    # 在 Windows 上註冊程式結束時的清理
+    atexit.register(force_exit)
+    
     try:
         main()
     except KeyboardInterrupt:
         safe_print('\n[中止] 用戶停止')
     finally:
+        # 清理 N_m3u8DL-RE 生成的 logs 資料夾
+        try:
+            if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+                logs_dir = os.path.join(sys._MEIPASS, 'exe', 'logs')
+                if os.path.exists(logs_dir):
+                    import shutil
+                    shutil.rmtree(logs_dir)
+        except Exception as e:
+            safe_print(f'清理 logs 資料夾失敗: {e}')
+        
         try:
             input('\n按 Enter 結束...')
         except:
