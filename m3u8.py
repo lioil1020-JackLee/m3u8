@@ -322,7 +322,7 @@ def run_downloader(url: str, out_dir: str, save_name: str, tmp_root: str) -> str
     os.makedirs(out_dir, exist_ok=True)
 
     cmd = [downloader, url, '--save-dir', out_dir, '--save-name', save_name,
-           '--skip-merge', '--tmp-dir', tmp_dir]
+           '--skip-merge', '--tmp-dir', tmp_dir, '--log-level', 'none']
 
     try:
         proc = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
