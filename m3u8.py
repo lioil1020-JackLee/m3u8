@@ -136,6 +136,9 @@ def parse_args():
     p.add_argument('--max-downloads', type=int, default=5, help='最多並發下載')
     p.add_argument('--wait', type=float, default=2.0, help='M3U8 嗅探等待秒數')
     p.add_argument('--no-ui', action='store_true', help='不顯示 UI')
+    p.add_argument('--filter-resolution', action='store_true', help='過濾低分辨率視頻')
+    p.add_argument('--no-filter-resolution', action='store_false', dest='filter_resolution', help='不過濾低分辨率視頻')
+    p.set_defaults(filter_resolution=True)
     p.set_defaults(fast=True)
     return p.parse_args()
 
@@ -232,6 +235,11 @@ def show_start_ui() -> tuple:
 
     btn_frm = tk.Frame(root)
     btn_frm.pack(pady=12)
+    
+    # 添加分辨率過濾 checkbox
+    filter_var = tk.BooleanVar(value=True)  # 預設打勾
+    tk.Checkbutton(btn_frm, text='過濾低分辨率 (<1920寬)', variable=filter_var).pack(side='left', padx=(0, 8))
+    
     tk.Button(btn_frm, text='Start', command=on_start, width=12).pack(side='left', padx=8)
     tk.Button(btn_frm, text='Cancel', command=on_cancel, width=12).pack(side='left')
 
@@ -242,13 +250,14 @@ def show_start_ui() -> tuple:
         flv_idx_str = flv_var.get().strip()
         out = out_var.get().strip()
         start_ep_str = start_ep_var.get().strip()
+        filter_resolution = filter_var.get()
         try:
             flv_idx = max(1, int(flv_idx_str))
         except ValueError:
             flv_idx = 1
         # start_ep_str 直接保留為字符串，在後面解析
-        return (val if val else None, flv_idx, out if out else None, start_ep_str if start_ep_str else '1')
-    return (None, 1, None, '1')
+        return (val if val else None, flv_idx, out if out else None, start_ep_str if start_ep_str else '1', filter_resolution)
+    return (None, 1, None, '1', True)
 
 
 def sniff_m3u8(page, episode_el, wait_seconds: float = 1.5, max_retries: int = 2) -> List[str]:
@@ -497,7 +506,7 @@ def main():
 
     # 取得參數
     if not args.no_ui and not args.url:
-        url, flv_idx, out_dir, start_ep = show_start_ui()
+        url, flv_idx, out_dir, start_ep, filter_resolution = show_start_ui()
         if not url:
             safe_print('未提供 URL，程式退出。')
             return
@@ -506,8 +515,12 @@ def main():
         if out_dir:
             args.out_dir = out_dir
         args.start_ep = start_ep
+        args.filter_resolution = filter_resolution
     else:
         args.start_ep = args.start_ep or 1
+        # 確保 filter_resolution 有預設值
+        if not hasattr(args, 'filter_resolution'):
+            args.filter_resolution = True
 
     out_dir = args.out_dir or os.path.abspath('.')
     os.makedirs(out_dir, exist_ok=True)
@@ -889,13 +902,14 @@ def main():
                     # 失敗的集數也加入需要重新下載的列表
                     need_redownload_eps.append(ep_num)
                 else:
-                    # 檢查寬度是否 < 1920
-                    try:
-                        width = status_info.get('width', 0)
-                        if width > 0 and width < 1920:
-                            need_redownload_eps.append(ep_num)
-                    except:
-                        pass
+                    # 檢查寬度是否 < 1920（只有在啟用過濾時才加入重新下載列表）
+                    if getattr(args, 'filter_resolution', True):
+                        try:
+                            width = status_info.get('width', 0)
+                            if width > 0 and width < 1920:
+                                need_redownload_eps.append(ep_num)
+                        except:
+                            pass
                 
                 line = f'E{ep_num:03d}           {resolution}'
                 safe_print(line)
@@ -904,11 +918,16 @@ def main():
             safe_print('-' * 70)
             report_lines.append('-' * 70)
             
-            # 添加需要重新下載的集數列表（包含失敗和低分辨率）
+            # 添加需要重新下載的集數列表
             if need_redownload_eps:
-                safe_print('\n【需要重新下載的集數】（失敗 + 寬度 < 1920）')
-                report_lines.append('')
-                report_lines.append('【需要重新下載的集數】（失敗 + 寬度 < 1920）')
+                if getattr(args, 'filter_resolution', True):
+                    safe_print('\n【需要重新下載的集數】（失敗 + 寬度 < 1920）')
+                    report_lines.append('')
+                    report_lines.append('【需要重新下載的集數】（失敗 + 寬度 < 1920）')
+                else:
+                    safe_print('\n【需要重新下載的集數】（失敗的集數）')
+                    report_lines.append('')
+                    report_lines.append('【需要重新下載的集數】（失敗的集數）')
                 redownload_formatted = format_episode_ranges(need_redownload_eps)
                 safe_print(redownload_formatted)
                 report_lines.append(redownload_formatted)
@@ -923,35 +942,38 @@ def main():
         except Exception as e:
             safe_print(f'⚠️  無法保存報告: {e}')
         
-        # 刪除寬度 < 1920 的視頻文件
-        safe_print('\n清理低分辨率視頻...')
-        deleted_count = 0
-        try:
-            for ep_num in sorted(episodes_status.keys()):
-                status_info = episodes_status[ep_num]
-                width = status_info.get('width', 0)
-                resolution = status_info.get('resolution', '')
-                save_name = status_info.get('save_name', '')
+        # 刪除寬度 < 1920 的視頻文件（如果啟用過濾）
+        if getattr(args, 'filter_resolution', True):
+            safe_print('\n清理低分辨率視頻...')
+            deleted_count = 0
+            try:
+                for ep_num in sorted(episodes_status.keys()):
+                    status_info = episodes_status[ep_num]
+                    width = status_info.get('width', 0)
+                    resolution = status_info.get('resolution', '')
+                    save_name = status_info.get('save_name', '')
+                    
+                    # 調試信息
+                    safe_print(f'  [檢查] E{ep_num:03d}: width={width}, save_name={save_name}', flush=True)
+                    
+                    # 只刪除成功下載但寬度 < 1920 的視頻
+                    if width > 0 and width < 1920 and save_name:
+                        mp4_file = os.path.join(out_dir, f'{save_name}.mp4')
+                        if os.path.exists(mp4_file):
+                            try:
+                                os.remove(mp4_file)
+                                safe_print(f'  ✓ 已刪除: {save_name}.mp4')
+                                deleted_count += 1
+                            except Exception as e:
+                                safe_print(f'  ⚠️  無法刪除 {save_name}.mp4: {e}')
+                        else:
+                            safe_print(f'  ⚠️  找不到: {save_name}.mp4')
                 
-                # 調試信息
-                safe_print(f'  [檢查] E{ep_num:03d}: width={width}, save_name={save_name}', flush=True)
-                
-                # 只刪除成功下載但寬度 < 1920 的視頻
-                if width > 0 and width < 1920 and save_name:
-                    mp4_file = os.path.join(out_dir, f'{save_name}.mp4')
-                    if os.path.exists(mp4_file):
-                        try:
-                            os.remove(mp4_file)
-                            safe_print(f'  ✓ 已刪除: {save_name}.mp4')
-                            deleted_count += 1
-                        except Exception as e:
-                            safe_print(f'  ⚠️  無法刪除 {save_name}.mp4: {e}')
-                    else:
-                        safe_print(f'  ⚠️  找不到: {save_name}.mp4')
-            
-            safe_print(f'\n✓ 已刪除 {deleted_count} 個低分辨率視頻')
-        except Exception as e:
-            safe_print(f'⚠️  清理視頻時出錯: {e}')
+                safe_print(f'\n✓ 已刪除 {deleted_count} 個低分辨率視頻')
+            except Exception as e:
+                safe_print(f'⚠️  清理視頻時出錯: {e}')
+        else:
+            safe_print('\n跳過低分辨率視頻清理（過濾已禁用）')
         
         # 清理臨時文件夾
         safe_print('\n清理臨時文件...')
