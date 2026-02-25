@@ -188,7 +188,7 @@ def parse_args():
     p.add_argument('--max-downloads', type=int, default=5, help='最多並發下載')
     p.add_argument('--wait', type=float, default=2.0, help='M3U8 嗅探等待秒數')
     p.add_argument('--no-ui', action='store_true', help='不顯示 UI')
-    p.add_argument('--tmp-root', default=None, help='臨時下載資料夾根目錄（可指定 RAM Disk 路徑）')
+    p.add_argument('--tmp-root', default='R:/', help='臨時下載資料夾根目錄（可指定 RAM Disk 路徑）')
     p.add_argument('--ram-tmp', action='store_true', help='優先嘗試使用記憶體暫存（Linux: /dev/shm；或環境變數 M3U8_RAM_TMP）')
     p.add_argument('--no-ram-tmp', action='store_false', dest='ram_tmp', help='停用記憶體暫存優先')
     p.add_argument('--filter-resolution', action='store_true', help='過濾低分辨率視頻')
@@ -342,7 +342,7 @@ def show_start_ui() -> tuple:
 
     # 暫存文件夾（放在 Output 下方）
     tk.Label(root, text='Temp folder:').pack(anchor='w', padx=8, pady=(8, 0))
-    tmp_var = tk.StringVar(value='')
+    tmp_var = tk.StringVar(value='R:/')
     tmp_frm = tk.Frame(root)
     tmp_frm.pack(padx=8, fill='x')
     entry_tmp = tk.Entry(tmp_frm, textvariable=tmp_var)
