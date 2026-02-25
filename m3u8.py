@@ -181,11 +181,32 @@ def show_start_ui() -> tuple:
     # 添加右鍵菜單
     def create_context_menu(widget):
         menu = tk.Menu(widget, tearoff=0)
-        menu.add_command(label="貼上", command=lambda: widget.event_generate('<<Paste>>'))
+        menu.add_command(label="貼上", command=lambda: paste_text(widget))
+
+        def paste_text(w):
+            try:
+                text = root.clipboard_get()
+                w.insert('insert', text)
+            except Exception:
+                try:
+                    w.event_generate('<<Paste>>')
+                except Exception:
+                    pass
         
         def show_menu(event):
-            menu.tk_popup(event.x_root, event.y_root)
+            try:
+                menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                try:
+                    menu.grab_release()
+                except Exception:
+                    pass
+
+        # Windows / 觸控板 / 部分滑鼠驅動的右鍵事件兼容
         widget.bind('<Button-3>', show_menu)
+        widget.bind('<ButtonRelease-3>', show_menu)
+        widget.bind('<Control-Button-1>', show_menu)
+        widget.bind('<Control-v>', lambda e: paste_text(widget))
     
     create_context_menu(url_entry)
 
@@ -224,14 +245,17 @@ def show_start_ui() -> tuple:
     create_context_menu(entry_out)
 
     # 按鈕
-    result = {'ok': False}
+    result = {'ok': False, 'closed': False}
 
     def on_start():
         result['ok'] = True
         root.destroy()
 
     def on_cancel():
+        result['closed'] = True
         root.destroy()
+
+    root.protocol('WM_DELETE_WINDOW', on_cancel)
 
     btn_frm = tk.Frame(root)
     btn_frm.pack(pady=12)
@@ -243,7 +267,23 @@ def show_start_ui() -> tuple:
     tk.Button(btn_frm, text='Start', command=on_start, width=12).pack(side='left', padx=8)
     tk.Button(btn_frm, text='Cancel', command=on_cancel, width=12).pack(side='left')
 
-    root.mainloop()
+    # Windows 下有些終端/滑鼠環境會誤觸發 SIGINT，導致 GUI 被 KeyboardInterrupt 中斷
+    old_sigint_handler = None
+    try:
+        if os.name == 'nt':
+            old_sigint_handler = signal.getsignal(signal.SIGINT)
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+    except Exception:
+        old_sigint_handler = None
+
+    try:
+        root.mainloop()
+    finally:
+        try:
+            if os.name == 'nt' and old_sigint_handler is not None:
+                signal.signal(signal.SIGINT, old_sigint_handler)
+        except Exception:
+            pass
 
     if result.get('ok'):
         val = url_var.get().strip()
@@ -260,8 +300,9 @@ def show_start_ui() -> tuple:
     return (None, 1, None, '1', True)
 
 
-def sniff_m3u8(page, episode_el, wait_seconds: float = 1.5, max_retries: int = 2) -> List[str]:
-    """快速嗅探 M3U8 URL - 支持重試"""
+def sniff_m3u8(page, episode_el, wait_seconds: float = 1.5, max_retries: int = 2, exclude_urls: set = None) -> List[str]:
+    """快速嗅探 M3U8 URL - 支持重試與去重"""
+    exclude_urls = exclude_urls or set()
     for attempt in range(max_retries):
         collected = []
         handler_registered = [False]
@@ -281,6 +322,10 @@ def sniff_m3u8(page, episode_el, wait_seconds: float = 1.5, max_retries: int = 2
         try:
             # 立即點擊集數按鈕
             try:
+                try:
+                    page.evaluate('(el) => el.scrollIntoView({block: "center"})', episode_el)
+                except Exception:
+                    pass
                 episode_el.click()
             except Exception:
                 try:
@@ -290,7 +335,8 @@ def sniff_m3u8(page, episode_el, wait_seconds: float = 1.5, max_retries: int = 2
 
             # 快速等待 M3U8 URL（通常會立即返回）
             start = time.time()
-            while time.time() - start < wait_seconds:
+            current_wait = wait_seconds + (attempt * 0.8)
+            while time.time() - start < current_wait:
                 if collected:
                     # 及時返回，不浪費時間
                     break
@@ -306,9 +352,11 @@ def sniff_m3u8(page, episode_el, wait_seconds: float = 1.5, max_retries: int = 2
                 except:
                     pass
         
-        # 如果找到了，立即返回
+        # 優先返回未出現過的新 URL
         if collected:
-            return collected
+            new_urls = [u for u in collected if u not in exclude_urls]
+            if new_urls:
+                return new_urls
         
         # 如果沒找到且還有重試機會，等待後重試
         if attempt < max_retries - 1:
@@ -508,14 +556,30 @@ def main():
     if not args.no_ui and not args.url:
         url, flv_idx, out_dir, start_ep, filter_resolution = show_start_ui()
         if not url:
-            safe_print('未提供 URL，程式退出。')
-            return
-        args.url = url
-        args.flv_idx = flv_idx
-        if out_dir:
-            args.out_dir = out_dir
-        args.start_ep = start_ep
-        args.filter_resolution = filter_resolution
+            # GUI 關閉或異常時，回退到終端輸入，避免直接退出
+            try:
+                safe_print('GUI 未取得 URL，改用終端輸入模式。')
+                manual_url = input('請輸入目標 URL（留空退出）: ').strip()
+            except Exception:
+                manual_url = ''
+
+            if not manual_url:
+                safe_print('未提供 URL，程式退出。')
+                return
+
+            args.url = manual_url
+            args.flv_idx = flv_idx
+            if out_dir:
+                args.out_dir = out_dir
+            args.start_ep = start_ep
+            args.filter_resolution = filter_resolution
+        else:
+            args.url = url
+            args.flv_idx = flv_idx
+            if out_dir:
+                args.out_dir = out_dir
+            args.start_ep = start_ep
+            args.filter_resolution = filter_resolution
     else:
         args.start_ep = args.start_ep or 1
         # 確保 filter_resolution 有預設值
@@ -676,6 +740,7 @@ def main():
 
         # 流水線處理：邊掃描邊下載邊合併邊檢查
         safe_print(f'\n========== 流水線處理 (邊掃描邊下載邊合併) ==========\n')
+        seen_m3u8_urls = set()
         
         # 流水線隊列和狀態跟蹤
         task_queue = queue.Queue()
@@ -832,9 +897,23 @@ def main():
 
                 # 快速掃描 M3U8
                 try:
-                    m3u8_list = sniff_m3u8(page, el, wait_seconds=1.0)
+                    m3u8_list = sniff_m3u8(page, el, wait_seconds=1.0, max_retries=3, exclude_urls=seen_m3u8_urls)
                     if m3u8_list:
                         url_m3u8 = m3u8_list[-1]
+                        if url_m3u8 in seen_m3u8_urls:
+                            # 再嘗試一次，避免抓到上一集的 URL
+                            retry_list = sniff_m3u8(page, el, wait_seconds=2.0, max_retries=2, exclude_urls=seen_m3u8_urls)
+                            if retry_list:
+                                url_m3u8 = retry_list[-1]
+
+                        if url_m3u8 in seen_m3u8_urls:
+                            print()  # 新行
+                            update_status(episode, '✗ URL 重複（已跳過）')
+                            with results_lock:
+                                episodes_status[episode]['error'] = 'URL 重複，疑似嗅探失敗'
+                            continue
+
+                        seen_m3u8_urls.add(url_m3u8)
                         print()  # 新行，分隔掃描進度和狀態輸出
                         update_status(episode, '掃描完成...排隊中')
                         # 立即提交到隊列，讓消費者開始處理
@@ -1017,10 +1096,14 @@ def main():
 
 
 if __name__ == '__main__':
-    # 強制結束處理器
-    def force_exit(signum=None, frame=None):
-        """強制退出程式"""
-        safe_print('\n[終止] 程式被強制關閉')
+    cleaned_up = [False]
+
+    def cleanup_runtime(verbose: bool = False):
+        """清理臨時資源（可重入）"""
+        if cleaned_up[0]:
+            return
+        cleaned_up[0] = True
+
         # 清理臨時文件
         try:
             import tempfile
@@ -1028,9 +1111,9 @@ if __name__ == '__main__':
             if os.path.exists(temp_dir):
                 import shutil
                 shutil.rmtree(temp_dir)
-        except:
+        except Exception:
             pass
-        
+
         # 清理 N_m3u8DL-RE 生成的 logs 資料夾
         try:
             if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
@@ -1038,39 +1121,46 @@ if __name__ == '__main__':
                 if os.path.exists(logs_dir):
                     import shutil
                     shutil.rmtree(logs_dir)
-                    safe_print(f'已清理 logs 資料夾: {logs_dir}')
+                    if verbose:
+                        safe_print(f'已清理 logs 資料夾: {logs_dir}')
         except Exception as e:
-            safe_print(f'清理 logs 資料夾失敗: {e}')
-        
+            if verbose:
+                safe_print(f'清理 logs 資料夾失敗: {e}')
+
+    # 強制結束處理器
+    def force_exit(signum=None, frame=None):
+        """強制退出程式"""
+        if signum is not None:
+            safe_print(f'\n[終止] 程式被強制關閉 (signal={signum})')
+        else:
+            safe_print('\n[終止] 程式被強制關閉')
+        cleanup_runtime(verbose=True)
         sys.exit(0)
     
     # 註冊信號處理
-    try:
-        signal.signal(signal.SIGINT, force_exit)  # Ctrl+C
-        signal.signal(signal.SIGTERM, force_exit)  # 終止信號
-    except:
-        pass
+    # Windows 終端有時會誤觸發 SIGINT，導致 GUI 被強制關閉；
+    # 因此在 Windows 不註冊 signal handler，改由 KeyboardInterrupt 正常處理。
+    if os.name != 'nt':
+        try:
+            signal.signal(signal.SIGINT, force_exit)  # Ctrl+C
+            signal.signal(signal.SIGTERM, force_exit)  # 終止信號
+        except Exception:
+            pass
     
-    # 在 Windows 上註冊程式結束時的清理
-    atexit.register(force_exit)
+    # 程式正常結束時只做清理，不觸發強制退出訊息/例外
+    atexit.register(cleanup_runtime)
     
     try:
         main()
     except KeyboardInterrupt:
         safe_print('\n[中止] 用戶停止')
     finally:
-        # 清理 N_m3u8DL-RE 生成的 logs 資料夾
-        try:
-            if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-                logs_dir = os.path.join(sys._MEIPASS, 'exe', 'logs')
-                if os.path.exists(logs_dir):
-                    import shutil
-                    shutil.rmtree(logs_dir)
-        except Exception as e:
-            safe_print(f'清理 logs 資料夾失敗: {e}')
+        cleanup_runtime(verbose=False)
         
         try:
-            input('\n按 Enter 結束...')
+            # 開發環境不要阻塞終端；僅打包 EXE 時保留暫停
+            if getattr(sys, 'frozen', False):
+                input('\n按 Enter 結束...')
         except:
             pass
 
