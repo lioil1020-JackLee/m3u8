@@ -245,11 +245,11 @@ def show_start_ui() -> tuple:
         import tkinter as tk
         from tkinter import filedialog
     except Exception:
-        return (None, 1, None, 1)
+        return (None, 1, None, '1', True, None)
 
     root = tk.Tk()
     root.title('M3U8 下載器 - 設定')
-    root.geometry('400x180')    
+    root.geometry('560x250')
     
     # 設定視窗圖標
     try:
@@ -340,6 +340,22 @@ def show_start_ui() -> tuple:
     tk.Button(out_frm, text='Browse', command=browse_out).pack(side='left', padx=(4, 0))
     create_context_menu(entry_out)
 
+    # 暫存文件夾（放在 Output 下方）
+    tk.Label(root, text='Temp folder:').pack(anchor='w', padx=8, pady=(8, 0))
+    tmp_var = tk.StringVar(value='')
+    tmp_frm = tk.Frame(root)
+    tmp_frm.pack(padx=8, fill='x')
+    entry_tmp = tk.Entry(tmp_frm, textvariable=tmp_var)
+    entry_tmp.pack(side='left', fill='x', expand=True)
+
+    def browse_tmp():
+        d = filedialog.askdirectory(title='Select temp folder')
+        if d:
+            tmp_var.set(d)
+
+    tk.Button(tmp_frm, text='Browse', command=browse_tmp).pack(side='left', padx=(4, 0))
+    create_context_menu(entry_tmp)
+
     # 按鈕
     result = {'ok': False, 'closed': False}
 
@@ -385,6 +401,7 @@ def show_start_ui() -> tuple:
         val = normalize_input_url(url_var.get())
         flv_idx_str = flv_var.get().strip()
         out = out_var.get().strip()
+        tmp_root = tmp_var.get().strip()
         start_ep_str = start_ep_var.get().strip()
         filter_resolution = filter_var.get()
         try:
@@ -392,8 +409,15 @@ def show_start_ui() -> tuple:
         except ValueError:
             flv_idx = 1
         # start_ep_str 直接保留為字符串，在後面解析
-        return (val if val else None, flv_idx, out if out else None, start_ep_str if start_ep_str else '1', filter_resolution)
-    return (None, 1, None, '1', True)
+        return (
+            val if val else None,
+            flv_idx,
+            out if out else None,
+            start_ep_str if start_ep_str else '1',
+            filter_resolution,
+            tmp_root if tmp_root else None,
+        )
+    return (None, 1, None, '1', True, None)
 
 
 def sniff_m3u8(page, episode_el, wait_seconds: float = 1.5, max_retries: int = 2, exclude_urls: set = None) -> List[str]:
@@ -722,7 +746,7 @@ def main():
 
     # 取得參數
     if not args.no_ui and not args.url:
-        url, flv_idx, out_dir, start_ep, filter_resolution = show_start_ui()
+        url, flv_idx, out_dir, start_ep, filter_resolution, tmp_root = show_start_ui()
         if not url:
             # GUI 關閉或異常時，回退到終端輸入，避免直接退出
             try:
@@ -739,6 +763,8 @@ def main():
             args.flv_idx = flv_idx
             if out_dir:
                 args.out_dir = out_dir
+            if tmp_root:
+                args.tmp_root = tmp_root
             args.start_ep = start_ep
             args.filter_resolution = filter_resolution
         else:
@@ -746,6 +772,8 @@ def main():
             args.flv_idx = flv_idx
             if out_dir:
                 args.out_dir = out_dir
+            if tmp_root:
+                args.tmp_root = tmp_root
             args.start_ep = start_ep
             args.filter_resolution = filter_resolution
     else:
