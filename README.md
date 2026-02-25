@@ -35,6 +35,7 @@
 - 特殊集數支持（總篇、劇場版等）
 - 智能文件夾創建（自動創建輸出目錄）
 - FFmpeg 音訊同步修正（預設啟用，改善影音不同步）
+- 記憶體暫存優先（可降低 SSD 長期寫入）
 
 ## 系統要求
 
@@ -102,9 +103,33 @@ python m3u8.py \
 # --max-downloads    : 最大並發下載數（默認：5，建議 3-8）
 # --wait             : M3U8 嗅探超時秒數（默認：2.0）
 # --no-ui            : 不顯示 GUI，直接使用命令行參數
+# --tmp-root         : 指定暫存根目錄（可設 RAM Disk 路徑）
+# --ram-tmp          : 優先用記憶體暫存（默認啟用）
+# --no-ram-tmp       : 關閉記憶體暫存優先
 # --sync-fix         : 啟用 FFmpeg 音訊同步修正（默認啟用）
 # --no-sync-fix      : 停用同步修正（速度較快，但可能出現影音不同步）
 ```
+
+## 暫存檔與 SSD 壽命
+
+下載過程中的暫存檔位於 `nm3_tmp`，每集合併完成後會自動刪除對應暫存資料夾。
+
+為了降低 SSD 寫入，可使用記憶體型暫存：
+
+- Linux：預設會嘗試 `/dev/shm`
+- Windows：可先建立 RAM Disk，然後指定路徑
+
+```bash
+# 指定 RAM Disk 路徑（Windows / Linux 都可）
+python m3u8.py --tmp-root "R:/"
+
+# 或用環境變數指定記憶體暫存根目錄
+# Windows PowerShell
+$env:M3U8_RAM_TMP = "R:/"
+python m3u8.py
+```
+
+若記憶體暫存不可用，程式會自動回退到輸出目錄下的 `nm3_tmp`。
 
 ## 影音不同步改善
 

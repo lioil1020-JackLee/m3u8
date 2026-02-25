@@ -188,14 +188,55 @@ def parse_args():
     p.add_argument('--max-downloads', type=int, default=5, help='最多並發下載')
     p.add_argument('--wait', type=float, default=2.0, help='M3U8 嗅探等待秒數')
     p.add_argument('--no-ui', action='store_true', help='不顯示 UI')
+    p.add_argument('--tmp-root', default=None, help='臨時下載資料夾根目錄（可指定 RAM Disk 路徑）')
+    p.add_argument('--ram-tmp', action='store_true', help='優先嘗試使用記憶體暫存（Linux: /dev/shm；或環境變數 M3U8_RAM_TMP）')
+    p.add_argument('--no-ram-tmp', action='store_false', dest='ram_tmp', help='停用記憶體暫存優先')
     p.add_argument('--filter-resolution', action='store_true', help='過濾低分辨率視頻')
     p.add_argument('--no-filter-resolution', action='store_false', dest='filter_resolution', help='不過濾低分辨率視頻')
     p.add_argument('--sync-fix', action='store_true', help='啟用 FFmpeg 音訊同步修正（預設啟用）')
     p.add_argument('--no-sync-fix', action='store_false', dest='sync_fix', help='停用 FFmpeg 音訊同步修正（更快但可能不同步）')
     p.set_defaults(filter_resolution=True)
     p.set_defaults(sync_fix=True)
+    p.set_defaults(ram_tmp=True)
     p.set_defaults(fast=True)
     return p.parse_args()
+
+
+def resolve_tmp_root(out_dir: str, args) -> tuple[str, str]:
+    """解析臨時目錄根路徑，返回 (tmp_root, mode_desc)"""
+    # 1) 使用者指定優先
+    if getattr(args, 'tmp_root', None):
+        return os.path.join(args.tmp_root, 'nm3_tmp'), 'custom'
+
+    # 2) 記憶體暫存優先（若可用）
+    if getattr(args, 'ram_tmp', True):
+        candidates = []
+
+        env_ram_tmp = os.environ.get('M3U8_RAM_TMP', '').strip()
+        if env_ram_tmp:
+            candidates.append((env_ram_tmp, 'ram-env'))
+
+        if os.name != 'nt':
+            candidates.append(('/dev/shm', 'ram-devshm'))
+
+        for base, mode in candidates:
+            try:
+                if not base:
+                    continue
+                if not os.path.isdir(base):
+                    continue
+                test_dir = os.path.join(base, 'nm3_tmp')
+                os.makedirs(test_dir, exist_ok=True)
+                test_file = os.path.join(test_dir, '.write_test')
+                with open(test_file, 'w', encoding='utf-8') as f:
+                    f.write('ok')
+                os.remove(test_file)
+                return test_dir, mode
+            except Exception:
+                continue
+
+    # 3) 預設寫入輸出目錄
+    return os.path.join(out_dir, 'nm3_tmp'), 'disk-default'
 
 
 def show_start_ui() -> tuple:
@@ -715,12 +756,13 @@ def main():
 
     out_dir = args.out_dir or os.path.abspath('.')
     os.makedirs(out_dir, exist_ok=True)
-    tmp_root = os.path.join(out_dir, 'nm3_tmp')
+    tmp_root, tmp_mode = resolve_tmp_root(out_dir, args)
 
     safe_print('=' * 60)
     safe_print(f'URL: {args.url}')
     safe_print(f'FLV 來源: {args.flv_idx}')
     safe_print(f'開始集: {args.start_ep}')
+    safe_print(f'暫存路徑: {tmp_root} ({tmp_mode})')
     safe_print('=' * 60)
 
     try:
