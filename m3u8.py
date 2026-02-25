@@ -190,7 +190,10 @@ def parse_args():
     p.add_argument('--no-ui', action='store_true', help='不顯示 UI')
     p.add_argument('--filter-resolution', action='store_true', help='過濾低分辨率視頻')
     p.add_argument('--no-filter-resolution', action='store_false', dest='filter_resolution', help='不過濾低分辨率視頻')
+    p.add_argument('--sync-fix', action='store_true', help='啟用 FFmpeg 音訊同步修正（預設啟用）')
+    p.add_argument('--no-sync-fix', action='store_false', dest='sync_fix', help='停用 FFmpeg 音訊同步修正（更快但可能不同步）')
     p.set_defaults(filter_resolution=True)
+    p.set_defaults(sync_fix=True)
     p.set_defaults(fast=True)
     return p.parse_args()
 
@@ -475,7 +478,7 @@ def run_downloader(url: str, out_dir: str, save_name: str, tmp_root: str) -> str
         return None
 
 
-def merge_ts_to_mp4(tmp_dir: str, out_mp4: str, ffmpeg_path: str = None, clean: bool = True) -> bool:
+def merge_ts_to_mp4(tmp_dir: str, out_mp4: str, ffmpeg_path: str = None, clean: bool = True, sync_fix: bool = True) -> bool:
     """合併 TS 為 MP4"""
     if not ffmpeg_path:
         ffmpeg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'exe', 'ffmpeg.exe')
@@ -493,8 +496,24 @@ def merge_ts_to_mp4(tmp_dir: str, out_mp4: str, ffmpeg_path: str = None, clean: 
                 break
 
         if raw_m3u8:
-            cmd = [ffmpeg_path, '-allowed_extensions', 'ALL', '-i', raw_m3u8, '-c', 'copy',
-                   '-bsf:a', 'aac_adtstoasc', '-y', out_mp4]
+            if sync_fix:
+                cmd = [
+                    ffmpeg_path,
+                    '-fflags', '+genpts',
+                    '-allowed_extensions', 'ALL',
+                    '-i', raw_m3u8,
+                    '-map', '0:v:0',
+                    '-map', '0:a:0?',
+                    '-c:v', 'copy',
+                    '-c:a', 'aac',
+                    '-af', 'aresample=async=1:first_pts=0',
+                    '-max_interleave_delta', '0',
+                    '-movflags', '+faststart',
+                    '-y', out_mp4
+                ]
+            else:
+                cmd = [ffmpeg_path, '-allowed_extensions', 'ALL', '-i', raw_m3u8, '-c', 'copy',
+                       '-bsf:a', 'aac_adtstoasc', '-y', out_mp4]
             proc = subprocess.run(cmd, cwd=tmp_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 stdin=subprocess.DEVNULL, encoding='utf-8', errors='replace', timeout=300)
             ok = proc.returncode == 0
@@ -509,8 +528,23 @@ def merge_ts_to_mp4(tmp_dir: str, out_mp4: str, ffmpeg_path: str = None, clean: 
                 with open(concat_path, 'w', encoding='ascii') as f:
                     for t in ts_files:
                         f.write(f"file '0____/{t}'\n")
-                cmd = [ffmpeg_path, '-f', 'concat', '-safe', '0', '-i', 'concat.txt', '-c', 'copy',
-                       '-bsf:a', 'aac_adtstoasc', '-y', out_mp4]
+                if sync_fix:
+                    cmd = [
+                        ffmpeg_path,
+                        '-fflags', '+genpts',
+                        '-f', 'concat', '-safe', '0', '-i', 'concat.txt',
+                        '-map', '0:v:0',
+                        '-map', '0:a:0?',
+                        '-c:v', 'copy',
+                        '-c:a', 'aac',
+                        '-af', 'aresample=async=1:first_pts=0',
+                        '-max_interleave_delta', '0',
+                        '-movflags', '+faststart',
+                        '-y', out_mp4
+                    ]
+                else:
+                    cmd = [ffmpeg_path, '-f', 'concat', '-safe', '0', '-i', 'concat.txt', '-c', 'copy',
+                           '-bsf:a', 'aac_adtstoasc', '-y', out_mp4]
             else:
                 segs = sorted([os.path.join(dp, f) for dp, dn, filenames in os.walk(tmp_dir)
                              for f in filenames if f.endswith('.ts')])
@@ -520,8 +554,23 @@ def merge_ts_to_mp4(tmp_dir: str, out_mp4: str, ffmpeg_path: str = None, clean: 
                 with open(concat_path, 'w', encoding='utf-8') as f:
                     for s in segs:
                         f.write(f"file '{s.replace(chr(92), '/')}'\n")
-                cmd = [ffmpeg_path, '-f', 'concat', '-safe', '0', '-i', concat_path, '-c', 'copy',
-                       '-bsf:a', 'aac_adtstoasc', '-y', out_mp4]
+                if sync_fix:
+                    cmd = [
+                        ffmpeg_path,
+                        '-fflags', '+genpts',
+                        '-f', 'concat', '-safe', '0', '-i', concat_path,
+                        '-map', '0:v:0',
+                        '-map', '0:a:0?',
+                        '-c:v', 'copy',
+                        '-c:a', 'aac',
+                        '-af', 'aresample=async=1:first_pts=0',
+                        '-max_interleave_delta', '0',
+                        '-movflags', '+faststart',
+                        '-y', out_mp4
+                    ]
+                else:
+                    cmd = [ffmpeg_path, '-f', 'concat', '-safe', '0', '-i', concat_path, '-c', 'copy',
+                           '-bsf:a', 'aac_adtstoasc', '-y', out_mp4]
 
             proc = subprocess.run(cmd, cwd=tmp_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 stdin=subprocess.DEVNULL, encoding='utf-8', errors='replace', timeout=300)
@@ -866,7 +915,7 @@ def main():
                     
                     # 合併
                     out_mp4 = os.path.join(out_dir, f'{save_name}.mp4')
-                    if not merge_ts_to_mp4(tmp_dir, out_mp4):
+                    if not merge_ts_to_mp4(tmp_dir, out_mp4, sync_fix=getattr(args, 'sync_fix', True)):
                         update_status(episode_num, '掃描完成...下載完成...✗ 合併失敗')
                         with results_lock:
                             episodes_status[episode_num]['error'] = '合併失敗'
