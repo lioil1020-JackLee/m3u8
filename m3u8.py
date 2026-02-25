@@ -127,6 +127,58 @@ def format_episode_ranges(episode_nums: list) -> str:
     return ','.join(ranges)
 
 
+def normalize_m3u8_url(url: str) -> str:
+    """正規化 m3u8 URL，用於去重比較"""
+    if not url:
+        return ''
+    normalized = url.strip()
+    normalized = normalized.replace('/play/hls/', '/play/')
+    if '?' in normalized:
+        normalized = normalized.split('?', 1)[0]
+    return normalized
+
+
+def pick_best_m3u8_url(urls: List[str], exclude_keys: set = None) -> str:
+    """從候選 URL 中挑選最佳者，優先非 /play/hls/ 且未出現過"""
+    if not urls:
+        return ''
+
+    exclude_keys = exclude_keys or set()
+
+    # 反向遍歷，優先最新請求
+    for candidate in reversed(urls):
+        key = normalize_m3u8_url(candidate)
+        if key and key not in exclude_keys and '/play/hls/' not in candidate:
+            return candidate
+
+    for candidate in reversed(urls):
+        key = normalize_m3u8_url(candidate)
+        if key and key not in exclude_keys:
+            return candidate
+
+    return urls[-1]
+
+
+def normalize_input_url(url: str) -> str:
+    """清理 URL 輸入，避免整段重複貼上造成無效網址"""
+    if not url:
+        return ''
+
+    cleaned = url.strip()
+    if not cleaned:
+        return ''
+
+    # 若整段網址被重複貼上兩次（A + A），自動還原為單次
+    if len(cleaned) % 2 == 0:
+        half = len(cleaned) // 2
+        first = cleaned[:half]
+        second = cleaned[half:]
+        if first == second and first.startswith(('http://', 'https://')):
+            cleaned = first
+
+    return cleaned
+
+
 def parse_args():
     p = argparse.ArgumentParser(description='M3U8 視頻下載器')
     p.add_argument('--url', default=None, help='目標頁面 URL')
@@ -186,6 +238,8 @@ def show_start_ui() -> tuple:
         def paste_text(w):
             try:
                 text = root.clipboard_get()
+                if w.selection_present():
+                    w.delete('sel.first', 'sel.last')
                 w.insert('insert', text)
             except Exception:
                 try:
@@ -204,9 +258,7 @@ def show_start_ui() -> tuple:
 
         # Windows / 觸控板 / 部分滑鼠驅動的右鍵事件兼容
         widget.bind('<Button-3>', show_menu)
-        widget.bind('<ButtonRelease-3>', show_menu)
         widget.bind('<Control-Button-1>', show_menu)
-        widget.bind('<Control-v>', lambda e: paste_text(widget))
     
     create_context_menu(url_entry)
 
@@ -286,7 +338,7 @@ def show_start_ui() -> tuple:
             pass
 
     if result.get('ok'):
-        val = url_var.get().strip()
+        val = normalize_input_url(url_var.get())
         flv_idx_str = flv_var.get().strip()
         out = out_var.get().strip()
         start_ep_str = start_ep_var.get().strip()
@@ -303,15 +355,23 @@ def show_start_ui() -> tuple:
 def sniff_m3u8(page, episode_el, wait_seconds: float = 1.5, max_retries: int = 2, exclude_urls: set = None) -> List[str]:
     """快速嗅探 M3U8 URL - 支持重試與去重"""
     exclude_urls = exclude_urls or set()
+    exclude_keys = {normalize_m3u8_url(u) for u in exclude_urls if u}
     for attempt in range(max_retries):
         collected = []
+        collected_keys = set()
         handler_registered = [False]
+        last_new_url_time = [0.0]
 
         def on_request(req):
             try:
                 url = req.url
-                if '.m3u8' in url and url not in collected:
+                if '.m3u8' in url:
+                    key = normalize_m3u8_url(url)
+                    if key in collected_keys:
+                        return
                     collected.append(url)
+                    collected_keys.add(key)
+                    last_new_url_time[0] = time.time()
             except Exception:
                 pass
 
@@ -333,12 +393,30 @@ def sniff_m3u8(page, episode_el, wait_seconds: float = 1.5, max_retries: int = 2
                 except:
                     pass
 
+            # 等待集數按鈕進入 active，避免抓到上一集殘留請求
+            active_wait_start = time.time()
+            while time.time() - active_wait_start < 2.0:
+                try:
+                    is_active = page.evaluate('(el) => el.classList && el.classList.contains("active")', episode_el)
+                    if is_active:
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.03)
+
             # 快速等待 M3U8 URL（通常會立即返回）
             start = time.time()
-            current_wait = wait_seconds + (attempt * 0.8)
+            current_wait = wait_seconds + (attempt * 1.0)
+            min_collect_time = min(1.2, current_wait)
+            quiet_window = 0.6
             while time.time() - start < current_wait:
-                if collected:
-                    # 及時返回，不浪費時間
+                elapsed = time.time() - start
+                if collected and elapsed >= min_collect_time:
+                    # 當一段時間沒有新 URL，視為本次點擊穩定
+                    if last_new_url_time[0] and (time.time() - last_new_url_time[0]) >= quiet_window:
+                        break
+                if elapsed >= min_collect_time and not collected:
+                    # 最短等待時間後仍無結果，提前結束當次嘗試
                     break
                 time.sleep(0.01)  # 更頻繁地檢查
             
@@ -354,7 +432,7 @@ def sniff_m3u8(page, episode_el, wait_seconds: float = 1.5, max_retries: int = 2
         
         # 優先返回未出現過的新 URL
         if collected:
-            new_urls = [u for u in collected if u not in exclude_urls]
+            new_urls = [u for u in collected if normalize_m3u8_url(u) not in exclude_keys]
             if new_urls:
                 return new_urls
         
@@ -741,6 +819,7 @@ def main():
         # 流水線處理：邊掃描邊下載邊合併邊檢查
         safe_print(f'\n========== 流水線處理 (邊掃描邊下載邊合併) ==========\n')
         seen_m3u8_urls = set()
+        seen_m3u8_keys = set()
         
         # 流水線隊列和狀態跟蹤
         task_queue = queue.Queue()
@@ -897,16 +976,19 @@ def main():
 
                 # 快速掃描 M3U8
                 try:
-                    m3u8_list = sniff_m3u8(page, el, wait_seconds=1.0, max_retries=3, exclude_urls=seen_m3u8_urls)
+                    m3u8_list = sniff_m3u8(page, el, wait_seconds=3.2, max_retries=3, exclude_urls=seen_m3u8_urls)
                     if m3u8_list:
-                        url_m3u8 = m3u8_list[-1]
-                        if url_m3u8 in seen_m3u8_urls:
-                            # 再嘗試一次，避免抓到上一集的 URL
-                            retry_list = sniff_m3u8(page, el, wait_seconds=2.0, max_retries=2, exclude_urls=seen_m3u8_urls)
-                            if retry_list:
-                                url_m3u8 = retry_list[-1]
+                        url_m3u8 = pick_best_m3u8_url(m3u8_list, exclude_keys=seen_m3u8_keys)
+                        url_key = normalize_m3u8_url(url_m3u8)
 
-                        if url_m3u8 in seen_m3u8_urls:
+                        if not url_m3u8 or url_key in seen_m3u8_keys:
+                            # 再嘗試一次，避免抓到上一集的 URL
+                            retry_list = sniff_m3u8(page, el, wait_seconds=4.0, max_retries=2, exclude_urls=seen_m3u8_urls)
+                            if retry_list:
+                                url_m3u8 = pick_best_m3u8_url(retry_list, exclude_keys=seen_m3u8_keys)
+                                url_key = normalize_m3u8_url(url_m3u8)
+
+                        if not url_m3u8 or url_key in seen_m3u8_keys:
                             print()  # 新行
                             update_status(episode, '✗ URL 重複（已跳過）')
                             with results_lock:
@@ -914,6 +996,7 @@ def main():
                             continue
 
                         seen_m3u8_urls.add(url_m3u8)
+                        seen_m3u8_keys.add(url_key)
                         print()  # 新行，分隔掃描進度和狀態輸出
                         update_status(episode, '掃描完成...排隊中')
                         # 立即提交到隊列，讓消費者開始處理
