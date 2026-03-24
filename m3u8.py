@@ -239,13 +239,33 @@ def resolve_tmp_root(out_dir: str, args) -> tuple[str, str]:
     return os.path.join(out_dir, 'nm3_tmp'), 'disk-default'
 
 
-def show_start_ui() -> tuple:
+def show_start_ui(defaults=None) -> tuple:
     """顯示 UI 讓用戶輸入參數"""
+    defaults = defaults or {}
+    default_url = normalize_input_url(defaults.get('url', '') or '')
+
+    try:
+        default_flv_idx = max(1, int(defaults.get('flv_idx', 1) or 1))
+    except (TypeError, ValueError):
+        default_flv_idx = 1
+
+    default_out_dir = defaults.get('out_dir') or 'F:/tmp'
+    default_start_ep = str(defaults.get('start_ep') or '.')
+    default_filter_resolution = bool(defaults.get('filter_resolution', True))
+    default_tmp_root = defaults.get('tmp_root') or 'R:/'
+
     try:
         import tkinter as tk
         from tkinter import filedialog
     except Exception:
-        return (None, 1, None, '1', True, None)
+        return (
+            default_url if default_url else None,
+            default_flv_idx,
+            default_out_dir if default_out_dir else None,
+            default_start_ep if default_start_ep else '1',
+            default_filter_resolution,
+            default_tmp_root if default_tmp_root else None,
+        )
 
     root = tk.Tk()
     root.title('M3U8 下載器 - 設定')
@@ -270,7 +290,7 @@ def show_start_ui() -> tuple:
     
     # URL 標籤和輸入
     tk.Label(root, text='Target page URL:').pack(anchor='w', padx=8, pady=(8, 0))
-    url_var = tk.StringVar()
+    url_var = tk.StringVar(value=default_url)
     url_entry = tk.Entry(root, textvariable=url_var, width=92)
     url_entry.pack(padx=8)
     
@@ -311,13 +331,13 @@ def show_start_ui() -> tuple:
     flv_start_frm.pack(anchor='w', padx=8, pady=(8, 0), fill='x')
     
     tk.Label(flv_start_frm, text='FLV source:').pack(side='left')
-    flv_var = tk.StringVar(value='1')
+    flv_var = tk.StringVar(value=str(default_flv_idx))
     flv_entry = tk.Entry(flv_start_frm, textvariable=flv_var, width=5)
     flv_entry.pack(side='left', padx=(0, 30))
     create_context_menu(flv_entry)
     
     tk.Label(flv_start_frm, text='Episodes:').pack(side='left')
-    start_ep_var = tk.StringVar(value='.')
+    start_ep_var = tk.StringVar(value=default_start_ep)
     start_ep_entry = tk.Entry(flv_start_frm, textvariable=start_ep_var, width=30)
     start_ep_entry.pack(side='left', padx=(0, 0))
     create_context_menu(start_ep_entry)
@@ -326,7 +346,7 @@ def show_start_ui() -> tuple:
 
     # 輸出文件夾
     tk.Label(root, text='Output folder (for MP4):').pack(anchor='w', padx=8, pady=(8, 0))
-    out_var = tk.StringVar(value='F:/tmp')
+    out_var = tk.StringVar(value=default_out_dir)
     out_frm = tk.Frame(root)
     out_frm.pack(padx=8, fill='x')
     entry_out = tk.Entry(out_frm, textvariable=out_var)
@@ -342,7 +362,7 @@ def show_start_ui() -> tuple:
 
     # 暫存文件夾（放在 Output 下方）
     tk.Label(root, text='Temp folder:').pack(anchor='w', padx=8, pady=(8, 0))
-    tmp_var = tk.StringVar(value='R:/')
+    tmp_var = tk.StringVar(value=default_tmp_root)
     tmp_frm = tk.Frame(root)
     tmp_frm.pack(padx=8, fill='x')
     entry_tmp = tk.Entry(tmp_frm, textvariable=tmp_var)
@@ -373,7 +393,7 @@ def show_start_ui() -> tuple:
     btn_frm.pack(pady=12)
     
     # 添加分辨率過濾 checkbox
-    filter_var = tk.BooleanVar(value=True)  # 預設打勾
+    filter_var = tk.BooleanVar(value=default_filter_resolution)
     tk.Checkbutton(btn_frm, text='過濾低分辨率 (<1920寬)', variable=filter_var).pack(side='left', padx=(0, 8))
     
     tk.Button(btn_frm, text='Start', command=on_start, width=12).pack(side='left', padx=8)
@@ -731,7 +751,7 @@ def check_video_resolution(mp4_path: str, ffprobe_path: str = None, max_retries:
     return {'resolution': 'Unknown', 'width': 0, 'height': 0}
 
 
-def main():
+def main(prefill_settings=None, force_ui=False):
     # 設置繁體中文 locale
     try:
         locale.setlocale(locale.LC_ALL, 'zh_TW.UTF-8')
@@ -743,10 +763,12 @@ def main():
             pass  # 使用默認 locale
     
     args = parse_args()
+    prefill_settings = prefill_settings or {}
+    use_ui = force_ui or (not args.no_ui and not args.url)
 
     # 取得參數
-    if not args.no_ui and not args.url:
-        url, flv_idx, out_dir, start_ep, filter_resolution, tmp_root = show_start_ui()
+    if use_ui:
+        url, flv_idx, out_dir, start_ep, filter_resolution, tmp_root = show_start_ui(prefill_settings)
         if not url:
             # GUI 關閉或異常時，回退到終端輸入，避免直接退出
             try:
@@ -757,7 +779,11 @@ def main():
 
             if not manual_url:
                 safe_print('未提供 URL，程式退出。')
-                return
+                return {
+                    'aborted': True,
+                    'need_redownload_eps': [],
+                    'settings': prefill_settings,
+                }
 
             args.url = manual_url
             args.flv_idx = flv_idx
@@ -785,6 +811,15 @@ def main():
     out_dir = args.out_dir or os.path.abspath('.')
     os.makedirs(out_dir, exist_ok=True)
     tmp_root, tmp_mode = resolve_tmp_root(out_dir, args)
+
+    run_settings = {
+        'url': args.url,
+        'flv_idx': args.flv_idx,
+        'out_dir': out_dir,
+        'tmp_root': getattr(args, 'tmp_root', None),
+        'start_ep': str(args.start_ep),
+        'filter_resolution': bool(getattr(args, 'filter_resolution', True)),
+    }
 
     safe_print('=' * 60)
     safe_print(f'URL: {args.url}')
@@ -883,7 +918,11 @@ def main():
             safe_print('❌ 找不到集數容器')
             browser.close()
             playwright_instance.stop()
-            return
+            return {
+                'aborted': True,
+                'need_redownload_eps': [],
+                'settings': run_settings,
+            }
 
         episode_elements = container.query_selector_all('a')
         safe_print(f'✓ 獲取 {len(episode_elements)} 個集數按鈕\n')
@@ -1158,6 +1197,8 @@ def main():
         report_lines.append('=' * 70)
         report_lines.append(f'完成: {success_count}/{total_count} 集')
         report_lines.append('=' * 70)
+
+        need_redownload_eps = []
         
         # 詳細報告（按集數排序）
         if episodes_status:
@@ -1170,9 +1211,6 @@ def main():
             report_lines.append(f'{'集數':<15} {'解析度':<20}')
             safe_print('-' * 70)
             report_lines.append('-' * 70)
-            
-            # 收集需要重新下載的集數（低分辨率 + 下載/掃描/合成失敗）
-            need_redownload_eps = []
             
             for ep_num in sorted(episodes_status.keys()):
                 status_info = episodes_status[ep_num]
@@ -1267,11 +1305,17 @@ def main():
             safe_print(f'⚠️  無法刪除臨時文件夾: {e}')
         
         # 最後顯示需要重新下載的資訊
-        if 'need_redownload_eps' in locals() and need_redownload_eps:
+        if need_redownload_eps:
             safe_print('\n' + '=' * 70)
             safe_print('【需要重新下載的集數】（失敗 + 寬度 < 1920）')
             safe_print(format_episode_ranges(need_redownload_eps))
             safe_print('=' * 70)
+
+        return {
+            'aborted': False,
+            'need_redownload_eps': sorted(need_redownload_eps),
+            'settings': run_settings,
+        }
 
     except Exception as e:
         safe_print(f'❌ 錯誤: {e}')
@@ -1295,6 +1339,12 @@ def main():
                     shutil.rmtree(logs_dir)
         except Exception as e:
             safe_print(f'清理 logs 資料夾失敗: {e}')
+
+        return {
+            'aborted': True,
+            'need_redownload_eps': [],
+            'settings': run_settings if 'run_settings' in locals() else prefill_settings,
+        }
 
 
 if __name__ == '__main__':
@@ -1353,18 +1403,53 @@ if __name__ == '__main__':
     atexit.register(cleanup_runtime)
     
     try:
-        main()
+        prefill_settings = None
+        force_ui = False
+
+        while True:
+            run_result = main(prefill_settings=prefill_settings, force_ui=force_ui)
+            prefill_settings = None
+            force_ui = False
+
+            if not isinstance(run_result, dict):
+                break
+
+            if run_result.get('aborted'):
+                break
+
+            need_redownload_eps = run_result.get('need_redownload_eps') or []
+            last_settings = run_result.get('settings') or {}
+
+            # 全部成功時直接結束，讓終端自動關閉
+            if not need_redownload_eps:
+                break
+
+            should_exit = True
+            while True:
+                choice = input('\n偵測到不合格檔案清單，是否結束程式？[y/n]: ').strip().lower()
+                if not choice:
+                    choice = 'y'
+
+                if choice in ('y', 'yes'):
+                    should_exit = True
+                    break
+
+                if choice in ('n', 'no'):
+                    should_exit = False
+                    prefill_settings = dict(last_settings)
+                    prefill_settings['start_ep'] = format_episode_ranges(need_redownload_eps) or '.'
+                    force_ui = True
+                    safe_print(f'將重新開啟設定畫面（Episodes 已帶入: {prefill_settings["start_ep"]}）')
+                    break
+
+                safe_print('請輸入 y 或 n。')
+
+            if should_exit:
+                break
     except KeyboardInterrupt:
         safe_print('\n[中止] 用戶停止')
     finally:
         cleanup_runtime(verbose=False)
-        
-        try:
-            # 開發環境不要阻塞終端；僅打包 EXE 時保留暫停
-            if getattr(sys, 'frozen', False):
-                input('\n按 Enter 結束...')
-        except:
-            pass
 
 
 
