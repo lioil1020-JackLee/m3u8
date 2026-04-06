@@ -9,8 +9,15 @@ wheels/
 # Virtual environments
 .venv
 
+# Editor settings
+.vscode/*
+!.vscode/settings.json
+
 browsers/
-exe/
 
 # Temporary files
 nm3_tmp/
+
+# Keep required external binaries in version control
+!exe/
+!exe/*.exe
