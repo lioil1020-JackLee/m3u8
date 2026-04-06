@@ -1,0 +1,62 @@
+name: Build Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: browsers
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked --group dev
+
+      - name: Clean previous build outputs
+        shell: pwsh
+        run: |
+          Remove-Item -LiteralPath build -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath dist -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Install Playwright browser
+        run: uv run playwright install chromium
+
+      - name: Build onedir executable
+        run: uv run pyinstaller --clean m3u8-onedir.spec
+
+      - name: Build onefile executable
+        run: uv run pyinstaller --clean m3u8-onefile.spec
+
+      - name: Archive distribution
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/m3u8/* -DestinationPath dist/m3u8-onedir-windows.zip -Force
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3u8-windows-build
+          path: |
+            dist/m3u8-onedir-windows.zip
+            dist/m3u8/**
+            dist/m3u8-onefile.exe

@@ -1,18 +1,18 @@
 [project]
 name = "m3u8-download"
 version = "0.1.0"
-description = "Add your description here"
+description = "Windows M3U8 downloader powered by Playwright, N_m3u8DL-RE, and FFmpeg"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "playwright>=1.30",
-    "requests>=2.32.5",
+    "urllib3>=2.0",
 ]
 
-[tool.setuptools.packages.find]
-exclude = ["exe", "browsers", "build", "dist"]
-
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pyinstaller>=6.0",
 ]
+
+[tool.uv]
+package = false

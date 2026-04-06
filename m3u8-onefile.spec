@@ -4,7 +4,7 @@
 a = Analysis(
     ['m3u8.py'],
     pathex=[],
-    binaries=[('exe/ffmpeg.exe', 'exe'), ('exe/N_m3u8DL-RE.exe', 'exe')],
+    binaries=[],
     datas=[('lioil.ico', '.'), ('exe', 'exe'), ('browsers', 'browsers')],
     hiddenimports=['playwright'],
     hookspath=[],
@@ -19,13 +19,16 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
     [],
-    exclude_binaries=True,
-    name='m3u8',
+    name='m3u8-onefile',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -33,13 +36,4 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=['lioil.ico'],
-)
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='m3u8',
 )

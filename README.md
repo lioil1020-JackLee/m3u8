@@ -67,8 +67,8 @@
 ### Python 套件
 
 - `playwright`
-- `requests`
-- 其他依賴請見 `requirements.txt`
+- `urllib3`
+- 其餘相依版本由 `pyproject.toml` 與 `uv.lock` 管理
 
 ### 外部工具（必需）
 
@@ -85,20 +85,20 @@
 ### 1) 安裝依賴
 
 ```bash
-pip install -r requirements.txt
-python -m playwright install chromium
+uv sync
+PLAYWRIGHT_BROWSERS_PATH=browsers uv run playwright install chromium
 ```
 
 ### 2) 執行（GUI）
 
 ```bash
-python m3u8.py
+uv run m3u8.py
 ```
 
 ### 3) 執行（CLI）
 
 ```bash
-python m3u8.py --no-ui --url "https://example.com/series" --out-dir "F:/videos"
+uv run m3u8.py --no-ui --url "https://example.com/series" --out-dir "F:/videos"
 ```
 
 ## GUI 使用說明
@@ -123,7 +123,7 @@ python m3u8.py --no-ui --url "https://example.com/series" --out-dir "F:/videos"
 ### 基本範例
 
 ```bash
-python m3u8.py \
+uv run m3u8.py \
   --url "https://example.com/series" \
   --flv-idx 1 \
   --start-ep "." \
@@ -165,7 +165,7 @@ python m3u8.py \
 範例：
 
 ```bash
-python m3u8.py --no-ui --url "https://example.com" --start-ep "1-5,8,10-12"
+uv run m3u8.py --no-ui --url "https://example.com" --start-ep "1-5,8,10-12"
 ```
 
 ## 下載流程說明
@@ -282,23 +282,38 @@ python m3u8.py --no-ui --url "https://example.com" --start-ep "1-5,8,10-12"
 
 ## 打包與發佈
 
-專案提供 `m3u8.spec`，可用 PyInstaller 打包：
+專案以 `uv` 管理依賴，並提供兩份 PyInstaller spec：
+
+- `m3u8-onedir.spec`：主方案，輸出資料夾版本，較穩定
+- `m3u8-onefile.spec`：單一 exe 版本，較方便分發
 
 ```bash
-uv run pyinstaller --clean m3u8.spec
+uv sync
+PLAYWRIGHT_BROWSERS_PATH=browsers uv run playwright install chromium
+uv run pyinstaller --clean m3u8-onedir.spec
+uv run pyinstaller --clean m3u8-onefile.spec
 ```
 
-產物通常在 `dist/` 目錄。
+產物通常在 `dist/` 目錄：
+
+- `dist/m3u8/`：`onedir` 版本
+- `dist/m3u8-onefile.exe`：`onefile` 版本
+
+若使用 GitHub Actions，請參考 `.github/workflows/build-release.yml`；流程會同時產出 `onedir` zip 與 `onefile` exe。
 
 ## 專案結構
 
 ```text
 m3u8/
+├─ .github/
+│  └─ workflows/
+│     └─ build-release.yml
 ├─ m3u8.py
 ├─ README.md
-├─ requirements.txt
 ├─ pyproject.toml
-├─ m3u8.spec
+├─ uv.lock
+├─ m3u8-onedir.spec
+├─ m3u8-onefile.spec
 ├─ exe/
 │  ├─ N_m3u8DL-RE.exe
 │  ├─ ffmpeg.exe
