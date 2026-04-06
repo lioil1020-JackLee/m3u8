@@ -1,36 +1,43 @@
-name: Build Release
+name: Build and Release m3u8
 
 on:
-  workflow_dispatch:
   push:
-    tags:
-      - "v*"
+    branches: ["main"]
+    tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    name: Build ${{ matrix.build_type }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest]
+        build_type: [onedir, onefile]
+
     env:
       PLAYWRIGHT_BROWSERS_PATH: browsers
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version-file: .python-version
-
-      - name: Set up uv
+      - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
-      - name: Install dependencies
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Sync project
         run: uv sync --locked --group dev
+
+      - name: Install Playwright browser
+        run: uv run playwright install chromium
 
       - name: Clean previous build outputs
         shell: pwsh
@@ -38,25 +45,48 @@ jobs:
           Remove-Item -LiteralPath build -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item -LiteralPath dist -Recurse -Force -ErrorAction SilentlyContinue
 
-      - name: Install Playwright browser
-        run: uv run playwright install chromium
-
-      - name: Build onedir executable
-        run: uv run pyinstaller --clean m3u8-onedir.spec
-
-      - name: Build onefile executable
-        run: uv run pyinstaller --clean m3u8-onefile.spec
-
-      - name: Archive distribution
+      - name: Build on Windows
         shell: pwsh
         run: |
-          Compress-Archive -Path dist/m3u8/* -DestinationPath dist/m3u8-onedir-windows.zip -Force
+          uv run pyinstaller --clean "m3u8-${{ matrix.build_type }}.spec"
+          if ("${{ matrix.build_type }}" -eq "onedir") {
+            Compress-Archive -Path dist/m3u8/* -DestinationPath dist/m3u8-windows-onedir.zip -Force
+          }
 
-      - name: Upload build artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: m3u8-windows-build
+          name: m3u8-${{ matrix.build_type }}-${{ matrix.os }}
           path: |
-            dist/m3u8-onedir-windows.zip
-            dist/m3u8/**
-            dist/m3u8-onefile.exe
+            dist/*.zip
+            dist/*.exe
+
+  release:
+    name: Create Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: raw_artifacts
+
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          mkdir -p final_assets
+          find raw_artifacts -type f \( -name "m3u8-*.zip" -o -name "m3u8-*.exe" \) -exec cp {} final_assets/ \;
+          ls -lh final_assets/
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: final_assets/*
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
