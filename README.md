@@ -23,6 +23,8 @@
 ### 核心能力
 
 - 自動開啟目標頁面，嗅探 `.m3u8` 請求並去重。
+- 支援新版播放器內嵌 `videourls` 資料，單片頁可直接取得指定 HLS 來源。
+- 下載前檢查首片段；若來源 CDN 被 DNS 導向 localhost，會立即提示更換 FLV source。
 - 以 FLV 來源索引選擇播放來源。
 - 劇集掃描與下載/合併/檢查採流水線並行處理。
 - 支援 `N_m3u8DL-RE` 下載 TS 片段，再用 `FFmpeg` 合併 MP4。
@@ -51,6 +53,7 @@
 - 重開設定時，會帶入上次：
   - URL
   - FLV source
+  - Concurrent downloads
   - Output folder
   - Temp folder
   - filter 選項
@@ -108,6 +111,7 @@ uv run m3u8.py --no-ui --url "https://example.com/series" --out-dir "F:/videos"
 - `Target page URL`：目標頁面網址
 - `FLV source`：FLV 來源索引（預設 `1`）
 - `Episodes`：要下載的集數語法（預設 `.` = 全部）
+- `Concurrent downloads`：同時下載數（預設 `3`，可設定 `1-16`）
 - `Output folder (for MP4)`：MP4 輸出資料夾
 - `Temp folder`：暫存根目錄
 - `過濾低分辨率 (<1920寬)`：是否啟用低解析度過濾（預設啟用）
@@ -128,8 +132,8 @@ uv run m3u8.py \
   --flv-idx 1 \
   --start-ep "." \
   --out-dir "F:/videos" \
-  --tmp-root "R:/" \
-  --max-downloads 5 \
+  --tmp-root "F:/tmp" \
+  --max-downloads 3 \
   --no-ui
 ```
 
@@ -141,10 +145,10 @@ uv run m3u8.py \
 | `--out-dir` | `None` | 輸出資料夾（未給時使用當前目錄） |
 | `--flv-idx` | `1` | FLV 來源索引 |
 | `--start-ep` | `.` | 集數選擇語法 |
-| `--max-downloads` | `5` | 並發工作線程數 |
+| `--max-downloads` | `3` | 並發工作線程數 |
 | `--wait` | `2.0` | M3U8 嗅探等待秒數（目前程式主流程未直接使用此參數） |
 | `--no-ui` | `False` | 不顯示 GUI |
-| `--tmp-root` | `R:/` | 暫存根目錄 |
+| `--tmp-root` | `F:/tmp` | 暫存根目錄 |
 | `--ram-tmp` | `True` | 優先使用記憶體暫存（若 `tmp-root` 未指定） |
 | `--no-ram-tmp` | - | 關閉記憶體暫存優先 |
 | `--filter-resolution` | `True` | 啟用低解析度過濾 |
@@ -174,6 +178,7 @@ uv run m3u8.py --no-ui --url "https://example.com" --start-ep "1-5,8,10-12"
 
 - 啟動 Playwright Chromium（headless）。
 - 阻擋 `image/stylesheet/font/media` 以加速。
+- 新版單片與劇集播放器優先解析頁面內嵌的 `videourls` HLS 資料。
 - 尋找 `.jujiepisodios` 容器與 `FLV` 按鈕。
 - 依 `flv-idx` 對應容器。
 
@@ -193,6 +198,7 @@ uv run m3u8.py --no-ui --url "https://example.com" --start-ep "1-5,8,10-12"
 ### 4) 下載與合併
 
 - 下載：`N_m3u8DL-RE --skip-merge --tmp-dir ...`
+- 下載器輸出固定以 UTF-8 解碼，並在來源健康檢查階段優先顯示精簡錯誤。
 - 合併：優先使用 `raw.m3u8` / `index.m3u8`，否則走 `concat.txt`。
 - `sync-fix` 開啟時會加入音訊同步修正參數。
 

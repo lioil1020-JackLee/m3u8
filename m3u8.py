@@ -10,12 +10,15 @@ import re
 import signal
 import atexit
 import locale
+import ipaddress
+import socket
 from datetime import datetime, timezone
 from typing import List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import queue
 import json
+from urllib.parse import urljoin, urlparse
 
 from playwright.sync_api import sync_playwright, Request
 
@@ -179,16 +182,102 @@ def normalize_input_url(url: str) -> str:
     return cleaned
 
 
+def extract_embedded_video_sources(html: str) -> List[dict]:
+    """從新版播放器頁面擷取 videourls JSON 陣列。"""
+    if not html:
+        return []
+
+    marker = 'videourls:'
+    marker_index = html.find(marker)
+    if marker_index < 0:
+        return []
+
+    array_start = html.find('[', marker_index + len(marker))
+    if array_start < 0:
+        return []
+
+    depth = 0
+    in_string = False
+    escaped = False
+    array_end = None
+
+    for index in range(array_start, len(html)):
+        char = html[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == '\\':
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char == '[':
+            depth += 1
+        elif char == ']':
+            depth -= 1
+            if depth == 0:
+                array_end = index + 1
+                break
+
+    if array_end is None:
+        return []
+
+    try:
+        raw_sources = json.loads(html[array_start:array_end])
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+
+    sources = []
+
+    def append_source(item, source_index=None, episode_index=0):
+        if not isinstance(item, dict):
+            return
+        url = str(item.get('url') or '').strip()
+        if not url:
+            return
+        try:
+            source = int(item.get('source', source_index))
+            episode = int(item.get('ep', episode_index))
+        except (TypeError, ValueError):
+            return
+
+        episode_name = str(item.get('name') or '').strip()
+        if 'ep' not in item and episode_name.isdigit():
+            episode = max(0, int(episode_name) - 1)
+
+        sources.append({
+            'source': source,
+            'episode': episode,
+            'type': str(item.get('type') or '').lower(),
+            'url': url,
+        })
+
+    for source_index, item in enumerate(raw_sources):
+        if isinstance(item, list):
+            for episode_index, episode_item in enumerate(item):
+                append_source(episode_item, source_index, episode_index)
+        elif isinstance(item, dict) and 'url' not in item:
+            for episode_index, episode_item in enumerate(item.values()):
+                append_source(episode_item, source_index, episode_index)
+        else:
+            append_source(item)
+
+    return sources
+
+
 def parse_args():
     p = argparse.ArgumentParser(description='M3U8 視頻下載器')
     p.add_argument('--url', default=None, help='目標頁面 URL')
     p.add_argument('--out-dir', default=None, help='輸出資料夾')
     p.add_argument('--flv-idx', type=int, default=1, help='FLV 來源索引')
     p.add_argument('--start-ep', default='.', help='集數選擇（. 為全部，1 為僅第1集，支持：1, 1-10, 1,5,9, 1-5,8,10-12）')
-    p.add_argument('--max-downloads', type=int, default=5, help='最多並發下載')
+    p.add_argument('--max-downloads', type=int, default=3, help='最多並發下載')
     p.add_argument('--wait', type=float, default=2.0, help='M3U8 嗅探等待秒數')
     p.add_argument('--no-ui', action='store_true', help='不顯示 UI')
-    p.add_argument('--tmp-root', default='R:/', help='臨時下載資料夾根目錄（可指定 RAM Disk 路徑）')
+    p.add_argument('--tmp-root', default='F:/tmp', help='臨時下載資料夾根目錄（可指定 RAM Disk 路徑）')
     p.add_argument('--ram-tmp', action='store_true', help='優先嘗試使用記憶體暫存（Linux: /dev/shm；或環境變數 M3U8_RAM_TMP）')
     p.add_argument('--no-ram-tmp', action='store_false', dest='ram_tmp', help='停用記憶體暫存優先')
     p.add_argument('--filter-resolution', action='store_true', help='過濾低分辨率視頻')
@@ -249,10 +338,15 @@ def show_start_ui(defaults=None) -> tuple:
     except (TypeError, ValueError):
         default_flv_idx = 1
 
+    try:
+        default_max_downloads = min(16, max(1, int(defaults.get('max_downloads', 3) or 3)))
+    except (TypeError, ValueError):
+        default_max_downloads = 3
+
     default_out_dir = defaults.get('out_dir') or 'F:/tmp'
     default_start_ep = str(defaults.get('start_ep') or '.')
     default_filter_resolution = bool(defaults.get('filter_resolution', True))
-    default_tmp_root = defaults.get('tmp_root') or 'R:/'
+    default_tmp_root = defaults.get('tmp_root') or 'F:/tmp'
 
     try:
         import tkinter as tk
@@ -265,11 +359,12 @@ def show_start_ui(defaults=None) -> tuple:
             default_start_ep if default_start_ep else '1',
             default_filter_resolution,
             default_tmp_root if default_tmp_root else None,
+            default_max_downloads,
         )
 
     root = tk.Tk()
     root.title('M3U8 下載器 - 設定')
-    root.geometry('560x250')
+    root.geometry('560x290')
     
     # 設定視窗圖標
     try:
@@ -343,6 +438,21 @@ def show_start_ui(defaults=None) -> tuple:
     create_context_menu(start_ep_entry)
     
     tk.Label(flv_start_frm, text='(. 全部, 1 僅第1集, 1-10, 1,5,9, 1-5,8,10-12)').pack(side='left', padx=(4, 0))
+
+    # 同時下載數
+    concurrency_frm = tk.Frame(root)
+    concurrency_frm.pack(anchor='w', padx=8, pady=(8, 0), fill='x')
+    tk.Label(concurrency_frm, text='Concurrent downloads:').pack(side='left')
+    max_downloads_var = tk.StringVar(value=str(default_max_downloads))
+    max_downloads_spinbox = tk.Spinbox(
+        concurrency_frm,
+        from_=1,
+        to=16,
+        textvariable=max_downloads_var,
+        width=5,
+    )
+    max_downloads_spinbox.pack(side='left', padx=(4, 0))
+    create_context_menu(max_downloads_spinbox)
 
     # 輸出文件夾
     tk.Label(root, text='Output folder (for MP4):').pack(anchor='w', padx=8, pady=(8, 0))
@@ -428,6 +538,10 @@ def show_start_ui(defaults=None) -> tuple:
             flv_idx = max(1, int(flv_idx_str))
         except ValueError:
             flv_idx = 1
+        try:
+            max_downloads = min(16, max(1, int(max_downloads_var.get().strip())))
+        except ValueError:
+            max_downloads = 3
         # start_ep_str 直接保留為字符串，在後面解析
         return (
             val if val else None,
@@ -436,8 +550,9 @@ def show_start_ui(defaults=None) -> tuple:
             start_ep_str if start_ep_str else '1',
             filter_resolution,
             tmp_root if tmp_root else None,
+            max_downloads,
         )
-    return (None, 1, None, '1', True, None)
+    return (None, 1, None, '1', True, None, 3)
 
 
 def sniff_m3u8(page, episode_el, wait_seconds: float = 1.5, max_retries: int = 2, exclude_urls: set = None) -> List[str]:
@@ -529,6 +644,78 @@ def sniff_m3u8(page, episode_el, wait_seconds: float = 1.5, max_retries: int = 2
             time.sleep(0.2)
     
     return []
+
+
+def check_m3u8_source_health(url: str, max_depth: int = 3) -> tuple[str, str]:
+    """檢查 m3u8 首片段，返回 (ok|blocked|warning, 說明)。"""
+    if not url:
+        return 'blocked', '來源 URL 為空'
+
+    current_url = url
+    http = urllib3.PoolManager(
+        timeout=urllib3.Timeout(connect=5.0, read=8.0),
+        retries=False,
+    )
+    headers = {'User-Agent': 'Mozilla/5.0'}
+
+    try:
+        for _ in range(max_depth):
+            response = http.request('GET', current_url, headers=headers)
+            if response.status < 200 or response.status >= 300:
+                return 'blocked', f'm3u8 回傳 HTTP {response.status}: {current_url}'
+
+            text = response.data.decode('utf-8-sig', errors='replace')
+            media_paths = [
+                line.strip()
+                for line in text.splitlines()
+                if line.strip() and not line.lstrip().startswith('#')
+            ]
+            if not media_paths:
+                return 'blocked', f'm3u8 沒有可下載的媒體項目: {current_url}'
+
+            media_url = urljoin(current_url, media_paths[0])
+            if '.m3u8' in urlparse(media_url).path.lower():
+                current_url = media_url
+                continue
+
+            parsed = urlparse(media_url)
+            host = parsed.hostname
+            if not host:
+                return 'blocked', f'片段 URL 缺少主機名稱: {media_url}'
+
+            port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+            addresses = {
+                result[4][0]
+                for result in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            }
+            if addresses and all(ipaddress.ip_address(address).is_loopback for address in addresses):
+                return (
+                    'blocked',
+                    f'來源片段網域 {host}:{port} 被 DNS 導向本機 '
+                    f'({", ".join(sorted(addresses))})，請更換 FLV source',
+                )
+
+            segment_response = http.request(
+                'GET',
+                media_url,
+                headers={**headers, 'Range': 'bytes=0-0'},
+                preload_content=False,
+            )
+            try:
+                if segment_response.status not in (200, 206):
+                    return (
+                        'blocked',
+                        f'第一片段回傳 HTTP {segment_response.status}: {media_url}',
+                    )
+                segment_response.read(1)
+            finally:
+                segment_response.release_conn()
+
+            return 'ok', f'首片段可連線: {host}:{port}'
+
+        return 'warning', f'm3u8 巢狀層級超過 {max_depth}，交由下載器繼續嘗試'
+    except (urllib3.exceptions.HTTPError, OSError, ValueError) as exc:
+        return 'warning', f'來源預檢暫時失敗，交由下載器重試: {exc}'
 
 
 def run_downloader(url: str, out_dir: str, save_name: str, tmp_root: str) -> str:
@@ -768,7 +955,9 @@ def main(prefill_settings=None, force_ui=False):
 
     # 取得參數
     if use_ui:
-        url, flv_idx, out_dir, start_ep, filter_resolution, tmp_root = show_start_ui(prefill_settings)
+        url, flv_idx, out_dir, start_ep, filter_resolution, tmp_root, max_downloads = show_start_ui(
+            prefill_settings
+        )
         if not url:
             # GUI 關閉或異常時，回退到終端輸入，避免直接退出
             try:
@@ -793,6 +982,7 @@ def main(prefill_settings=None, force_ui=False):
                 args.tmp_root = tmp_root
             args.start_ep = start_ep
             args.filter_resolution = filter_resolution
+            args.max_downloads = max_downloads
         else:
             args.url = url
             args.flv_idx = flv_idx
@@ -802,11 +992,17 @@ def main(prefill_settings=None, force_ui=False):
                 args.tmp_root = tmp_root
             args.start_ep = start_ep
             args.filter_resolution = filter_resolution
+            args.max_downloads = max_downloads
     else:
         args.start_ep = args.start_ep or 1
         # 確保 filter_resolution 有預設值
         if not hasattr(args, 'filter_resolution'):
             args.filter_resolution = True
+
+    try:
+        args.max_downloads = min(16, max(1, int(args.max_downloads)))
+    except (TypeError, ValueError):
+        args.max_downloads = 3
 
     out_dir = args.out_dir or os.path.abspath('.')
     os.makedirs(out_dir, exist_ok=True)
@@ -819,12 +1015,14 @@ def main(prefill_settings=None, force_ui=False):
         'tmp_root': getattr(args, 'tmp_root', None),
         'start_ep': str(args.start_ep),
         'filter_resolution': bool(getattr(args, 'filter_resolution', True)),
+        'max_downloads': int(getattr(args, 'max_downloads', 3)),
     }
 
     safe_print('=' * 60)
     safe_print(f'URL: {args.url}')
     safe_print(f'FLV 來源: {args.flv_idx}')
     safe_print(f'開始集: {args.start_ep}')
+    safe_print(f'同時下載數: {args.max_downloads}')
     safe_print(f'暫存路徑: {tmp_root} ({tmp_mode})')
     safe_print('=' * 60)
 
@@ -862,12 +1060,34 @@ def main(prefill_settings=None, force_ui=False):
 
         safe_print('[3/3] 分析 FLV 來源...')
         safe_print('  ⏳ 正在尋找容器...')
+
+        embedded_sources = extract_embedded_video_sources(page.content())
+        selected_embedded_sources = [
+            source for source in embedded_sources
+            if source['source'] == args.flv_idx - 1
+            and (source['type'] == 'hls' or '.m3u8' in source['url'].lower())
+        ]
+        direct_source_mode = bool(selected_embedded_sources)
         
         # 獲取所有 FLV 容器
         containers = page.query_selector_all('.jujiepisodios')
         safe_print(f'  ✓ 發現 {len(containers)} 個容器')
         
-        if len(containers) == 0:
+        if direct_source_mode:
+            safe_print(f'  ✓ 新版播放器：發現 {len(embedded_sources)} 筆來源資料')
+            safe_print(f'  ✓ FLV {args.flv_idx} 對應 {len(selected_embedded_sources)} 筆 HLS 影片')
+        elif embedded_sources:
+            available_sources = sorted({source['source'] + 1 for source in embedded_sources})
+            safe_print(f'  ❌ FLV {args.flv_idx} 沒有可下載的 HLS 來源')
+            safe_print(f'  可用來源: {available_sources}')
+            browser.close()
+            playwright_instance.stop()
+            return {
+                'aborted': True,
+                'need_redownload_eps': [],
+                'settings': run_settings,
+            }
+        elif len(containers) == 0:
             safe_print('  ⚠️  提示：未找到容器，頁面選擇器可能已改變')
             safe_print('  💡 請確認：')
             safe_print('     • URL 是否正確')
@@ -884,14 +1104,18 @@ def main(prefill_settings=None, force_ui=False):
         
         # 找到對應 FLV 索引的 FLV 按鈕並點擊
         flv_idx = args.flv_idx
-        safe_print('  ⏳ 正在尋找 FLV 按鈕...')
-        flv_buttons = page.locator('//a[contains(text(), "FLV")]').all()
-        safe_print(f'  ✓ 找到 {len(flv_buttons)} 個 FLV 按鈕')
+        if direct_source_mode:
+            flv_buttons = []
+            safe_print('  ✓ 新版播放器來源不需點擊')
+        else:
+            safe_print('  ⏳ 正在尋找 FLV 按鈕...')
+            flv_buttons = page.locator('//a[contains(text(), "FLV")]').all()
+            safe_print(f'  ✓ 找到 {len(flv_buttons)} 個 FLV 按鈕')
         
         flv_container_idx = None
         try:
             # FLV 按鈕的索引應該對應容器的索引
-            if flv_idx - 1 < len(flv_buttons):
+            if not direct_source_mode and flv_idx - 1 < len(flv_buttons):
                 flv_button = flv_buttons[flv_idx - 1]
                 flv_text = flv_button.inner_text().strip()
                 safe_print(f'  FLV {flv_idx}: {flv_text}')
@@ -909,12 +1133,14 @@ def main(prefill_settings=None, force_ui=False):
             safe_print(f'  ⚠ 無法處理 FLV {flv_idx}: {e}')
         
         # 使用對應的容器
-        if flv_container_idx is not None and flv_container_idx < len(containers):
+        if direct_source_mode:
+            container = None
+        elif flv_container_idx is not None and flv_container_idx < len(containers):
             container = containers[flv_container_idx]
         else:
             container = page.query_selector('.jujiepisodios')
             
-        if not container:
+        if not direct_source_mode and not container:
             safe_print('❌ 找不到集數容器')
             browser.close()
             playwright_instance.stop()
@@ -924,8 +1150,11 @@ def main(prefill_settings=None, force_ui=False):
                 'settings': run_settings,
             }
 
-        episode_elements = container.query_selector_all('a')
-        safe_print(f'✓ 獲取 {len(episode_elements)} 個集數按鈕\n')
+        episode_elements = [] if direct_source_mode else container.query_selector_all('a')
+        if direct_source_mode:
+            safe_print(f'✓ 直接解析 {len(selected_embedded_sources)} 個影片項目\n')
+        else:
+            safe_print(f'✓ 獲取 {len(episode_elements)} 個集數按鈕\n')
 
         # 取得標題
         try:
@@ -940,13 +1169,19 @@ def main(prefill_settings=None, force_ui=False):
         episode_info = []  # 列表存 (index, ep_text, season, episode, suffix)
         ep_text_count = {}  # 用於統計重複集數
         
-        for idx, el in enumerate(episode_elements):
-            try:
-                ep_text = page.evaluate('(e) => e.innerText', el).strip()
-                ep_text_count[ep_text] = ep_text_count.get(ep_text, 0) + 1
-                episode_info.append((idx, ep_text, None, None, None))
-            except:
-                pass
+        if direct_source_mode:
+            selected_embedded_sources.sort(key=lambda source: source['episode'])
+            for idx, source in enumerate(selected_embedded_sources):
+                ep_num = source['episode'] + 1
+                episode_info.append((idx, str(ep_num), 1, ep_num, ''))
+        else:
+            for idx, el in enumerate(episode_elements):
+                try:
+                    ep_text = page.evaluate('(e) => e.innerText', el).strip()
+                    ep_text_count[ep_text] = ep_text_count.get(ep_text, 0) + 1
+                    episode_info.append((idx, ep_text, None, None, None))
+                except:
+                    pass
         
         safe_print(f'共 {len(episode_info)} 個集數，其中重複: {[k for k,v in ep_text_count.items() if v > 1]}')
         
@@ -955,6 +1190,8 @@ def main(prefill_settings=None, force_ui=False):
         repeat_counters = {}    # 用於統計重複集數
         
         for i, (idx, ep_text, _, _, _) in enumerate(episode_info):
+            if direct_source_mode:
+                continue
             # 判斷是否是數字集數
             if ep_text.isdigit():
                 ep_num = int(ep_text)
@@ -1053,13 +1290,8 @@ def main(prefill_settings=None, force_ui=False):
                 finally:
                     task_queue.task_done()
         
-        # 啟動消費者線程
         num_workers = args.max_downloads
         workers = []
-        for i in range(num_workers):
-            t = threading.Thread(target=worker, args=(i,), daemon=False)
-            t.start()
-            workers.append(t)
         
         # 解析集數選擇
         selected_episodes = parse_episode_selection(args.start_ep, len(episode_info))
@@ -1085,6 +1317,38 @@ def main(prefill_settings=None, force_ui=False):
             playwright_instance.stop()
             
             raise ValueError(f'集數 {min(invalid_episodes)} 超出最大集數 {max_episode}')
+
+        if direct_source_mode:
+            probe_source = next(
+                (
+                    source for source in selected_embedded_sources
+                    if source['episode'] + 1 in selected_episodes
+                ),
+                None,
+            )
+            if probe_source:
+                probe_episode = probe_source['episode'] + 1
+                safe_print(f'  ⏳ 正在檢查 FLV {args.flv_idx} 的來源健康狀態（E{probe_episode:03d}）...')
+                health_status, health_message = check_m3u8_source_health(probe_source['url'])
+                if health_status == 'blocked':
+                    safe_print(f'  ❌ {health_message}')
+                    browser.close()
+                    playwright_instance.stop()
+                    return {
+                        'aborted': False,
+                        'need_redownload_eps': sorted(selected_episodes),
+                        'settings': run_settings,
+                    }
+                if health_status == 'warning':
+                    safe_print(f'  ⚠ {health_message}')
+                else:
+                    safe_print(f'  ✓ {health_message}')
+
+        # 啟動消費者線程
+        for i in range(num_workers):
+            t = threading.Thread(target=worker, args=(i,), daemon=False)
+            t.start()
+            workers.append(t)
         
         # 生產者（主線程）：邊掃描邊提交任務
         total_episodes = len(selected_episodes)
@@ -1110,8 +1374,11 @@ def main(prefill_settings=None, force_ui=False):
             update_status(episode, '掃描中...')
             
             try:
-                # 重新查詢集數元素
-                try:
+                if direct_source_mode:
+                    m3u8_list = [selected_embedded_sources[el_idx]['url']]
+                    el = None
+                else:
+                    # 重新查詢集數元素
                     if flv_container_idx is not None and flv_container_idx < len(containers):
                         container = containers[flv_container_idx]
                     else:
@@ -1127,19 +1394,20 @@ def main(prefill_settings=None, force_ui=False):
                         continue
 
                     el = current_episodes[el_idx]
+                    m3u8_list = sniff_m3u8(
+                        page,
+                        el,
+                        wait_seconds=3.2,
+                        max_retries=3,
+                        exclude_urls=seen_m3u8_urls,
+                    )
 
-                except Exception as e:
-                    update_status(episode, '✗ 掃描異常')
-                    continue
-
-                # 快速掃描 M3U8
                 try:
-                    m3u8_list = sniff_m3u8(page, el, wait_seconds=3.2, max_retries=3, exclude_urls=seen_m3u8_urls)
                     if m3u8_list:
                         url_m3u8 = pick_best_m3u8_url(m3u8_list, exclude_keys=seen_m3u8_keys)
                         url_key = normalize_m3u8_url(url_m3u8)
 
-                        if not url_m3u8 or url_key in seen_m3u8_keys:
+                        if not direct_source_mode and (not url_m3u8 or url_key in seen_m3u8_keys):
                             # 再嘗試一次，避免抓到上一集的 URL
                             retry_list = sniff_m3u8(page, el, wait_seconds=4.0, max_retries=2, exclude_urls=seen_m3u8_urls)
                             if retry_list:
