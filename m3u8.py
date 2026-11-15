@@ -18,6 +18,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import queue
 import json
+import base64
+import binascii
 from urllib.parse import urljoin, urlparse
 
 from playwright.sync_api import sync_playwright, Request
@@ -182,6 +184,30 @@ def normalize_input_url(url: str) -> str:
     return cleaned
 
 
+def decode_embedded_video_url(value: str) -> str:
+    """解碼新版播放器以 Base64/atob 儲存的影片網址。"""
+    url = str(value or '').strip()
+    if not url or url.startswith(('http://', 'https://')):
+        return url
+
+    if not re.fullmatch(r'[A-Za-z0-9+/=_-]+', url):
+        return url
+
+    try:
+        padded = url + ('=' * ((4 - len(url) % 4) % 4))
+        decoded = base64.b64decode(
+            padded,
+            altchars=b'-_',
+            validate=True,
+        ).decode('utf-8').strip()
+    except (ValueError, UnicodeDecodeError, binascii.Error):
+        return url
+
+    if decoded.startswith(('http://', 'https://')):
+        return decoded
+    return url
+
+
 def extract_embedded_video_sources(html: str) -> List[dict]:
     """從新版播放器頁面擷取 videourls JSON 陣列。"""
     if not html:
@@ -235,7 +261,7 @@ def extract_embedded_video_sources(html: str) -> List[dict]:
     def append_source(item, source_index=None, episode_index=0):
         if not isinstance(item, dict):
             return
-        url = str(item.get('url') or '').strip()
+        url = decode_embedded_video_url(item.get('url'))
         if not url:
             return
         try:
@@ -721,7 +747,8 @@ def check_m3u8_source_health(url: str, max_depth: int = 3) -> tuple[str, str]:
 def run_downloader(url: str, out_dir: str, save_name: str, tmp_root: str) -> str:
     """執行下載器，返回 tmp_dir 路徑或 None"""
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    downloader = os.path.join(script_dir, 'exe', 'N_m3u8DL-RE.exe')
+    tool_dir = os.path.join(script_dir, 'exe')
+    downloader = os.path.join(tool_dir, 'N_m3u8DL-RE.exe')
 
     if not os.path.exists(downloader):
         safe_print(f'  ❌ 下載器不存在')
@@ -736,8 +763,13 @@ def run_downloader(url: str, out_dir: str, save_name: str, tmp_root: str) -> str
            '--skip-merge', '--tmp-dir', tmp_dir, '--no-log']
 
     try:
+        # 新版 N_m3u8DL-RE 會從目前目錄/PATH 尋找 ffmpeg。
+        # 將隨程式附帶的工具目錄放入 PATH，並以該目錄啟動，兼容舊版與新版。
+        env = os.environ.copy()
+        env['PATH'] = tool_dir + os.pathsep + env.get('PATH', '')
         proc = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            stdin=subprocess.DEVNULL, encoding='utf-8', errors='replace', timeout=600)
+                            stdin=subprocess.DEVNULL, cwd=tool_dir, env=env,
+                            encoding='utf-8', errors='replace', timeout=600)
         if proc.returncode == 0:
             return tmp_dir
         else:
@@ -1039,6 +1071,12 @@ def main(prefill_settings=None, force_ui=False):
         browsers_path = os.path.join(base_path, 'browsers')
         if os.path.exists(browsers_path):
             os.environ['PLAYWRIGHT_BROWSERS_PATH'] = browsers_path
+        chromium_executable = os.path.join(
+            browsers_path,
+            'chromium-1208',
+            'chrome-win64',
+            'chrome.exe',
+        )
         
         safe_print('\n[1/3] 初始化 Playwright...')
         safe_print('  ⏳ 正在啟動瀏覽器驅動...')
@@ -1046,7 +1084,10 @@ def main(prefill_settings=None, force_ui=False):
 
         safe_print('[2/3] 啟動瀏覽器和加載頁面...')
         safe_print('  ⏳ 正在啟動 Chromium...')
-        browser = playwright_instance.chromium.launch(headless=True)
+        launch_kwargs = {'headless': True}
+        if os.path.isfile(chromium_executable):
+            launch_kwargs['executable_path'] = chromium_executable
+        browser = playwright_instance.chromium.launch(**launch_kwargs)
         page = browser.new_page()
 
         # 阻擋資源
